@@ -3,15 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 
-def chat(model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+def chat(llm_dict: dict[str, Any], prompt: str) -> dict[str, Any]:
     """离线飞轮 flywheel.llm.completion.chat 的 mock。"""
-
-    prompt = ""
-    if messages:
-        prompt = str(messages[-1].get("content", ""))
 
     return {
         "provider": "fly",
-        "model": model,
+        "model": llm_dict.get("model"),
+        "base_url": llm_dict.get("base_url"),
         "output": f"fly mock LLM output for: {prompt}",
     }

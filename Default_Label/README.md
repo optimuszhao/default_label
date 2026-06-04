@@ -76,8 +76,8 @@ cat Default_Label/mock_data/output/result.json
 ```json
 "runtime": {
   "sdk_name": "naie",
-  "logger": "naie.log.logger",
-  "llm_client": "naie.http.HttpClient"
+  "log": "naie.log.logger.info(message)",
+  "llm_client": "naie.http.HttpClient.post(url, body)"
 }
 ```
 
@@ -99,8 +99,8 @@ python3 -m Default_Label.main
 ```json
 "runtime": {
   "sdk_name": "fly",
-  "logger": "flywheel.logger.log",
-  "llm_client": "flywheel.llm.completion.chat"
+  "log": "flywheel.logger.log(level, message)",
+  "llm_client": "flywheel.llm.completion.chat(llm_dict, prompt)"
 }
 ```
 
@@ -138,8 +138,21 @@ python3 Default_Label/main.py
 ```python
 from . import LLMClient
 
-llm_client = LLMClient()
-llm_result = llm_client.call_llm("mock input text")
+client = LLMClient()
+client.log("info", "start default label")
+llm_result = client.llm_client("mock input text")
+```
+
+`LLMClient` 内部已经统一处理两套 SDK 的真实调用差异：
+
+```python
+# 在线飞轮 naie
+logger.info("message")
+http_client.post(url="...", body=body_dict)
+
+# 离线飞轮 flywheel
+log("info", "message")
+chat(llm_dict, prompt)
 ```
 
 ## `main.py` 的执行链路
