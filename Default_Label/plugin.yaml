@@ -1,4 +1,4 @@
 name: Default Label
 version: 1.0.0
-entry: bin/set_env.sh
+entry: python -m Default_Label.main
 description: Mock project for Default Label algorithm package

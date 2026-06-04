@@ -2,10 +2,32 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-from . import LLMClient
-from .default_label_util import build_label_result, read_input_records, write_result
-from .knowledge_manager import load_knowledge
+
+# main.py 支持两种启动方式：
+# 1. python -m Default_Label.main
+# 2. python Default_Label/main.py
+#
+# 第一种方式属于 Python 包启动，下面可以直接使用相对导入。
+# 第二种方式属于脚本启动，Python 默认只认识 main.py 所在目录。
+# 所以这里把算法包父目录加入 sys.path，再按包名导入 Default_Label。
+if __package__ in (None, ""):
+    PACKAGE_ROOT = Path(__file__).resolve().parent
+    PACKAGE_PARENT = PACKAGE_ROOT.parent
+    sys.path.insert(0, str(PACKAGE_PARENT))
+
+    from Default_Label import LLMClient
+    from Default_Label.default_label_util import (
+        build_label_result,
+        read_input_records,
+        write_result,
+    )
+    from Default_Label.knowledge_manager import load_knowledge
+else:
+    from . import LLMClient
+    from .default_label_util import build_label_result, read_input_records, write_result
+    from .knowledge_manager import load_knowledge
 
 
 REQUIRED_ENV_KEYS = [
@@ -27,7 +49,7 @@ def get_required_env() -> dict[str, str]:
 def run() -> int:
     print("[main.py] Default Label mock run started")
 
-    # 读取 set_env.sh export 出来的环境变量。
+    # 读取外部服务提前注入到虚拟环境里的环境变量。
     # 这 4 个变量名保持旧算法包习惯，方便改造时减少业务代码变化。
     env = get_required_env()
     input_path = env["Data_Input_Path"]
