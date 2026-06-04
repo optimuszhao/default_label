@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+__all__ = ["LLMClient"]
+
+
 # 这个文件放在算法包最外层，负责做 SDK 适配。
 # main.py、default_label_util.py 等业务代码统一使用这里的 LLMClient。
 # 在线飞轮环境和离线飞轮环境的日志、大模型调用依赖差异，都收敛在这里。
