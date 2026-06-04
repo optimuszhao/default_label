@@ -99,14 +99,16 @@ done
 # 自动定位算法包目录。
 # SCRIPT_DIR 是当前脚本所在目录 bin。
 # PACKAGE_ROOT 是算法包根目录 Default_Label。
-# LIB_DIR 是本地 SDK 压缩包目录。
+# PACKAGE_PARENT 是算法包父目录，用于 python -m Default_Label.main。
 # CALLER_DIR 是用户执行脚本时所在目录，用来解析相对路径参数。
 # PYTHON_BIN 默认使用 python3，也允许外部通过 PYTHON_BIN=/path/to/python 覆盖。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LIB_DIR="$PACKAGE_ROOT/lib"
+PACKAGE_PARENT="$(cd "$PACKAGE_ROOT/.." && pwd)"
+PACKAGE_NAME="$(basename "$PACKAGE_ROOT")"
 CALLER_DIR="$(pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DEFAULT_LABEL_MOCK_RUNTIME="${DEFAULT_LABEL_MOCK_RUNTIME:-online_naie}"
 
 # 将输入目录、输出目录、知识文件路径统一转为绝对路径。
 # main.py 后续直接使用这些环境变量，避免 cd 到算法包根目录后相对路径失效。
@@ -114,15 +116,15 @@ DATA_INPUT_PATH="$(resolve_path "$DATA_INPUT_PATH")"
 DATA_OUTPUT_PATH="$(resolve_path "$DATA_OUTPUT_PATH")"
 KNOWLEDGE="$(resolve_path "$KNOWLEDGE")"
 
-# 声明两个 SDK 压缩包的完整路径。
-# 安装顺序固定：先安装 naie_api，再安装依赖它的 naie_impl_network。
-NAIE_API_SDK="$LIB_DIR/naie_api-23.3.3.tar.gz"
-NAIE_IMPL_NETWORK_SDK="$LIB_DIR/naie_impl_network-23.1.1.1.tar.gz"
-
-# 校验 SDK 文件是否存在。
-# 本地 demo 需要先执行 scripts/build_mock_sdks.py 生成这两个 tar.gz。
-[[ -f "$NAIE_API_SDK" ]] || error "SDK file not found: $NAIE_API_SDK. Run: cd \"$PACKAGE_ROOT\" && $PYTHON_BIN scripts/build_mock_sdks.py"
-[[ -f "$NAIE_IMPL_NETWORK_SDK" ]] || error "SDK file not found: $NAIE_IMPL_NETWORK_SDK. Run: cd \"$PACKAGE_ROOT\" && $PYTHON_BIN scripts/build_mock_sdks.py"
+# 本地 demo 用 mock_runtime 模拟在线/离线飞轮环境里已经存在的 SDK。
+# DEFAULT_LABEL_MOCK_RUNTIME=online_naie 表示模拟在线飞轮 naie 依赖。
+# DEFAULT_LABEL_MOCK_RUNTIME=offline_fly 表示模拟离线飞轮 fly 依赖。
+# DEFAULT_LABEL_MOCK_RUNTIME=none 表示使用真实 Python 环境里已经提供的 SDK。
+if [[ "$DEFAULT_LABEL_MOCK_RUNTIME" != "none" ]]; then
+  MOCK_RUNTIME_DIR="$PACKAGE_ROOT/mock_runtime/$DEFAULT_LABEL_MOCK_RUNTIME"
+  [[ -d "$MOCK_RUNTIME_DIR" ]] || error "mock runtime not found: $MOCK_RUNTIME_DIR"
+  export PYTHONPATH="$MOCK_RUNTIME_DIR${PYTHONPATH:+:$PYTHONPATH}"
+fi
 
 # 导出 main.py 依赖的 4 个环境变量。
 # 变量名保持和旧算法包一致，让 main.py 继续通过 os.getenv 读取。
@@ -134,36 +136,16 @@ export Knowledge="$KNOWLEDGE"
 # 打印关键运行日志。
 # 日志用于本地验证，也方便 K8s Job 日志中定位路径、Python 和参数问题。
 echo "[set_env.sh] package root: $PACKAGE_ROOT"
+echo "[set_env.sh] package parent: $PACKAGE_PARENT"
 echo "[set_env.sh] python: $PYTHON_BIN"
+echo "[set_env.sh] mock runtime: $DEFAULT_LABEL_MOCK_RUNTIME"
 echo "[set_env.sh] Data_Input_Path: $Data_Input_Path"
 echo "[set_env.sh] Data_Output_Path: $Data_Output_Path"
 echo "[set_env.sh] AgentID: $AgentID"
-echo "[set_env.sh] SDK installation started"
-
-# 安装第一个 SDK：naie_api。
-# --no-index 表示只从本地 lib 目录找包。
-# --find-links 指定本地 SDK 包目录。
-# 使用 "$PYTHON_BIN" -m pip，确保 pip 属于当前 Python 环境。
-"$PYTHON_BIN" -m pip install \
-  --disable-pip-version-check \
-  --no-cache-dir \
-  --no-index \
-  --find-links "$LIB_DIR" \
-  "$LIB_DIR/naie_api-23.3.3.tar.gz"
-
-# 安装第二个 SDK：naie_impl_network。
-# 该 mock SDK 内部 import naie_api，所以放在 naie_api 安装完成后执行。
-"$PYTHON_BIN" -m pip install \
-  --disable-pip-version-check \
-  --no-cache-dir \
-  --no-index \
-  --find-links "$LIB_DIR" \
-  "$LIB_DIR/naie_impl_network-23.1.1.1.tar.gz"
-
-echo "[set_env.sh] SDK installation completed"
 echo "[set_env.sh] starting main.py"
 
-# 进入算法包根目录后启动 main.py。
+# 进入算法包父目录后，通过 -m 方式启动 Default_Label.main。
+# 这种方式会先加载 Default_Label/__init__.py，完成 SDK 适配逻辑。
 # exec 会用 Python 进程替换当前 Shell 进程，让 main.py 的退出码直接返回给外部调用方。
-cd "$PACKAGE_ROOT"
-exec "$PYTHON_BIN" "$PACKAGE_ROOT/main.py"
+cd "$PACKAGE_PARENT"
+exec "$PYTHON_BIN" -m "$PACKAGE_NAME.main"

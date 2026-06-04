@@ -34,19 +34,30 @@ def read_input_records(input_path: str) -> list[dict[str, Any]]:
 def build_label_result(
     records: list[dict[str, Any]],
     knowledge_config: dict[str, Any],
+    llm_results: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    # 从知识配置里读取默认标签和分数。
+    # 真实算法可以在这里结合 LLM 结果、规则、知识库配置生成标签。
     label = str(knowledge_config.get("default_label", "default_label"))
     score = float(knowledge_config.get("score", 0.98))
 
-    return [
-        {
+    results: list[dict[str, Any]] = []
+    for index, record in enumerate(records):
+        item = {
             "id": str(record["id"]),
             "text": str(record["text"]),
             "label": label,
             "score": score,
         }
-        for record in records
-    ]
+
+        # llm_results 由 main.py 传入。
+        # 这里把大模型输出挂到每条标注结果里，方便本地验证适配层是否生效。
+        if llm_results is not None:
+            item["llm"] = llm_results[index]
+
+        results.append(item)
+
+    return results
 
 
 def write_result(output_path: str, result: dict[str, Any]) -> Path:

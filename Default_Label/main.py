@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any
 
-import naie_api
-import naie_impl_network
-
-from default_label_util import build_label_result, read_input_records, write_result
-from knowledge_manager import load_knowledge
+from . import LLMClient
+from .default_label_util import build_label_result, read_input_records, write_result
+from .knowledge_manager import load_knowledge
 
 
 REQUIRED_ENV_KEYS = [
@@ -30,6 +27,8 @@ def get_required_env() -> dict[str, str]:
 def run() -> int:
     print("[main.py] Default Label mock run started")
 
+    # 读取 set_env.sh export 出来的环境变量。
+    # 这 4 个变量名保持旧算法包习惯，方便改造时减少业务代码变化。
     env = get_required_env()
     input_path = env["Data_Input_Path"]
     output_path = env["Data_Output_Path"]
@@ -52,18 +51,23 @@ def run() -> int:
         f"{knowledge_config.get('name')} {knowledge_config.get('version')}"
     )
 
-    print("[main.py] calling mock SDKs")
-    api_version = naie_api.get_api_version()
-    network_probe: dict[str, Any] = naie_impl_network.get_network_label_result(
-        str(records[0]["text"]) if records else ""
-    )
-    network_version = naie_impl_network.get_network_impl_version()
-    print(f"[main.py] naie_api version: {api_version}")
-    print(f"[main.py] naie_impl_network version: {network_version}")
-    print(f"[main.py] network SDK mock result: {network_probe}")
+    print("[main.py] initializing LLMClient")
+    # 算法包内部统一使用 LLMClient。
+    # 当前环境使用 naie 还是 fly，由 Default_Label/__init__.py 自动判断。
+    llm_client = LLMClient()
+    runtime_info = llm_client.get_runtime_info()
+    print(f"[main.py] runtime SDK: {runtime_info}")
+
+    print("[main.py] calling LLMClient for each record")
+    # 每条输入记录都通过同一个 LLMClient 调用大模型。
+    # 业务流程只关心 call_llm 方法，无需直接 import naie/fly SDK。
+    llm_results = [
+        llm_client.call_llm(str(record["text"]))
+        for record in records
+    ]
 
     print("[main.py] building label result")
-    label_result = build_label_result(records, knowledge_config)
+    label_result = build_label_result(records, knowledge_config, llm_results)
 
     result = {
         "success": True,
@@ -74,10 +78,7 @@ def run() -> int:
             "name": knowledge_config.get("name"),
             "version": knowledge_config.get("version"),
         },
-        "sdk": {
-            "naie_api_version": api_version,
-            "naie_impl_network_version": network_version,
-        },
+        "runtime": runtime_info,
         "label_result": label_result,
     }
 
