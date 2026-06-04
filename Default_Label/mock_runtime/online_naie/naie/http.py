@@ -3,11 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 
-class NaieHttpClient:
-    """在线飞轮 naie HTTP Client SDK 的 mock。"""
+class HttpClient:
+    """在线飞轮 naie.http.HttpClient 的 mock。"""
 
     def post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        prompt = str(payload.get("prompt", ""))
+        messages = payload.get("messages", [])
+        prompt = ""
+        if messages:
+            prompt = str(messages[-1].get("content", ""))
+
         return {
             "provider": "naie",
             "path": path,

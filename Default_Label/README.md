@@ -7,7 +7,7 @@
 - 外部服务负责拉起算法包进程，并提前在虚拟环境里注入环境变量。
 - `Default_Label/__init__.py` 负责自动识别 SDK 环境，并统一封装 `LLMClient`。
 - 业务代码统一调用 `LLMClient.call_llm()`，业务流程保持稳定。
-- 本地 mock runtime 用来模拟在线飞轮的 `naie` 依赖和离线飞轮的 `fly` 依赖。
+- 本地 mock runtime 用来模拟在线飞轮的 `naie` 依赖和离线飞轮的 `flywheel` 依赖。
 
 ## 目录结构
 
@@ -24,11 +24,14 @@ Default_Label/
 │   └── output/
 ├── mock_runtime/
 │   ├── online_naie/
-│   │   ├── naie_http_client.py
-│   │   └── naie_logging.py
+│   │   └── naie/
+│   │       ├── http.py
+│   │       └── log.py
 │   └── offline_fly/
-│       ├── fly_http_client.py
-│       └── fly_logging.py
+│       └── flywheel/
+│           ├── logger.py
+│           └── llm/
+│               └── completion.py
 ├── default_label_util.py
 ├── knowledge_manager.py
 ├── main.py
@@ -73,8 +76,8 @@ cat Default_Label/mock_data/output/result.json
 ```json
 "runtime": {
   "sdk_name": "naie",
-  "logging_sdk": "naie_logging",
-  "http_client_sdk": "naie_http_client"
+  "logger": "naie.log.logger",
+  "llm_client": "naie.http.HttpClient"
 }
 ```
 
@@ -96,8 +99,8 @@ python3 -m Default_Label.main
 ```json
 "runtime": {
   "sdk_name": "fly",
-  "logging_sdk": "fly_logging",
-  "http_client_sdk": "fly_http_client"
+  "logger": "flywheel.logger.log",
+  "llm_client": "flywheel.llm.completion.chat"
 }
 ```
 
@@ -106,7 +109,7 @@ python3 -m Default_Label.main
 真实在线/离线飞轮环境里，外部服务负责：
 
 1. 创建或选择 Python 虚拟环境。
-2. 保证虚拟环境里存在对应的 logging 和 httpclient SDK。
+2. 保证虚拟环境里存在对应的 `naie` 或 `flywheel` SDK。
 3. 注入 `Data_Input_Path`、`Data_Output_Path`、`AgentID`、`Knowledge`。
 4. 启动算法包主程序。
 
@@ -126,8 +129,8 @@ python3 Default_Label/main.py
 
 `Default_Label/__init__.py` 里做了三件事：
 
-1. 先尝试导入 `naie_logging` 和 `naie_http_client`。
-2. naie 导入失败后，尝试导入 `fly_logging` 和 `fly_http_client`。
+1. 先尝试导入 `from naie.http import HttpClient` 和 `from naie.log import logger`。
+2. naie 导入失败后，尝试导入 `from flywheel.logger import log` 和 `from flywheel.llm.completion import chat`。
 3. 封装统一的 `LLMClient`，对外只暴露 `call_llm(prompt)`。
 
 业务代码里只需要：
@@ -198,7 +201,7 @@ PYTHONPATH="./Default_Label/mock_runtime/online_naie"
 PYTHONPATH="./Default_Label/mock_runtime/offline_fly"
 ```
 
-真实飞轮环境里确认 Python 虚拟环境已经提供对应的 logging 和 httpclient SDK。
+真实飞轮环境里确认 Python 虚拟环境已经提供对应的 `naie` 或 `flywheel` SDK。
 
 ### result.json 没生成怎么办
 
