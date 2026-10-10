@@ -34,6 +34,40 @@ export interface User {
   createdAt: number;
 }
 
+/** 后台算子列表的一行 */
+export interface OperatorSummary {
+  id: string;
+  name: string;
+  kind: 'comfyweb' | 'http' | 'mock';
+  baseUrl: string;
+  appid: string;
+  enabled: boolean;
+  maintenance: boolean;
+  maintenanceNote: string | null;
+  visibility: 'all' | 'admin_only';
+  priority: number;
+  maxInflight: number;
+  settings: { imagePollMs: number; videoPollMs: number };
+  running: number;
+  status: 'unknown' | 'online' | 'offline' | 'maintenance' | 'disabled';
+  health: { image: boolean; video: boolean; message: string | null; checkedAt: number | null };
+  /** 密钥是否已设置（不返回内容） */
+  secret: { set: boolean; updatedAt: number | null };
+  tokenExpiresAt: number | null;
+  tokenOk: boolean | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 测试连接的一步：ok=null 表示跳过 */
+export interface OperatorTestStep {
+  key: string;
+  label: string;
+  ok: boolean | null;
+  message: string;
+  ms: number;
+}
+
 /** 站点公开配置（未登录也能读取） */
 export interface SiteInfo {
   registration: 'open' | 'closed';
@@ -54,7 +88,7 @@ export interface TokenStatus {
   issuedAt?: number | null;
   expiresAt?: number | null;
   /** 到期时间的依据：jwt = 从 token 里读出；assumed = 按文档的 72 小时推算；env = 手动配置的 token，未知 */
-  expiresBasis?: 'jwt' | 'assumed' | 'env' | null;
+  expiresBasis?: 'jwt' | 'assumed' | 'manual' | 'env' | null;
   lastVerifyAt?: number | null;
   lastVerifyOk?: boolean | null;
   lastVerifyMessage?: string | null;

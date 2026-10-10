@@ -42,22 +42,33 @@ test('创作台按算子能力显示控件，文生视频按原生尺寸提交�
   expect(tasks[0].params.height).toBe(768);
 });
 
-test('管理员在设置页能看到令牌状态并校验，普通用户看不到', async ({ page, browser }) => {
+test('管理后台：查看算子与令牌、立即校验、重新获取、开关维护模式；普通用户进不去', async ({ page, browser }) => {
   await register(page, `admin@e2e.local`).catch(async () => {
     // 两个视口共用一个服务：第二次直接登录
     await page.request.post('/api/auth/login', { data: { email: 'admin@e2e.local', password: 'password123' } });
   });
-  await page.goto('/studio/settings');
-  await expect(page.getByRole('heading', { name: '算子令牌' })).toBeVisible();
+  await page.goto('/admin');
+  await expect(page.getByRole('heading', { name: '概览' })).toBeVisible();
+  await page.goto('/admin/operators/op_default');
+  await expect(page.getByRole('heading', { name: '默认算子（ComfyUI）' })).toBeVisible();
+  await page.getByRole('tab', { name: '凭证与令牌' }).click();
+  await page.getByRole('button', { name: '重新获取' }).click();
+  await expect(page.getByText('已重新获取令牌')).toBeVisible();
   await page.getByRole('button', { name: '立即校验' }).click();
-  await expect(page.getByText('令牌有效')).toBeVisible();
+  await expect(page.getByText('令牌有效').first()).toBeVisible();
   await expect(page.getByText('按接口文档的 72 小时推算')).toBeVisible();
+
+  await page.getByRole('tab', { name: '概览' }).click();
+  await page.getByRole('switch', { name: '维护模式' }).click();
+  await expect(page.getByText('已进入维护')).toBeVisible();
+  await page.getByRole('switch', { name: '维护模式' }).click();
+  await expect(page.getByText('已结束维护')).toBeVisible();
 
   const other = await browser.newPage();
   await register(other);
-  await other.goto('/studio/settings');
-  await expect(other.getByRole('heading', { name: '自动调度' })).toBeVisible();
-  await expect(other.getByRole('heading', { name: '算子令牌' })).toHaveCount(0);
+  await other.goto('/admin');
+  await expect(other).toHaveURL(/\/studio\/create/);
+  expect((await other.request.get('/api/admin/overview')).status()).toBe(404);
   await other.close();
 });
 
@@ -121,9 +132,29 @@ test('每个页面都能打开，没有控制台报错，并留存截图', async
     ['assets', '/studio/assets'],
     ['settings', '/studio/settings'],
   ];
+  // 后台页面用管理员账号截图
+  const adminPages: [string, string][] = [
+    ['admin-overview', '/admin'],
+    ['admin-operators', '/admin/operators'],
+    ['admin-operator-detail', '/admin/operators/op_default'],
+    ['admin-tasks', '/admin/tasks'],
+    ['admin-users', '/admin/users'],
+    ['admin-backups', '/admin/backups'],
+    ['admin-audit', '/admin/audit'],
+  ];
   for (const [name, url] of pages) {
     await page.goto(url);
     // 页面有 SSE 长连接，网络不会空闲；等加载完成再稍等渲染
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true });
+  }
+  await page.request.post('/api/auth/logout');
+  await page.request.post('/api/auth/login', { data: { email: 'admin@e2e.local', password: 'password123' } }).then(async (response) => {
+    if (!response.ok()) await register(page, 'admin@e2e.local');
+  });
+  for (const [name, url] of adminPages) {
+    await page.goto(url);
     await page.waitForLoadState('load');
     await page.waitForTimeout(600);
     await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true });

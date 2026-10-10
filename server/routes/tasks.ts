@@ -5,7 +5,7 @@ import { clampDuration, resolveSize } from '../../shared/operator.ts';
 import type { Task } from '../../shared/types.ts';
 import { config } from '../config.ts';
 import { db, newId, now, type Row } from '../db.ts';
-import { capabilities, provider } from '../providers/index.ts';
+import { capabilities, getAdapter } from '../providers/index.ts';
 import { getTask, getTaskOwner, toTask } from '../repo.ts';
 import { kickScheduler } from '../scheduler.ts';
 import { bad, ownsAsset, parse, uid } from './common.ts';
@@ -83,8 +83,8 @@ function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
  * 按算子能力规整参数：去掉不起作用的参数，尺寸、时长、张数收进支持范围。
  * 前端已经按能力隐藏了控件，这里兜底旧客户端和故事批量生成。
  */
-function normalizeTask(input: z.infer<typeof taskSchema>): z.infer<typeof taskSchema> {
-  const caps = capabilities();
+function normalizeTask(input: z.infer<typeof taskSchema>, isAdmin = false): z.infer<typeof taskSchema> {
+  const caps = capabilities(isAdmin);
   const video = input.type === 't2v' || input.type === 'i2v';
   const cap = video ? caps.video : caps.image;
   const params = { ...input.params };
@@ -163,7 +163,7 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
     if (!body) return;
     const error = validateTaskInput(uid(request), body);
     if (error) return bad(reply, error);
-    const task = insertTask(uid(request), normalizeTask(body));
+    const task = insertTask(uid(request), normalizeTask(body, request.user!.isAdmin));
     kickScheduler();
     return task;
   });
@@ -175,7 +175,7 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
       const error = validateTaskInput(uid(request), item);
       if (error) return bad(reply, error);
     }
-    const tasks = body.tasks.map((item) => insertTask(uid(request), normalizeTask(item)));
+    const tasks = body.tasks.map((item) => insertTask(uid(request), normalizeTask(item, request.user!.isAdmin)));
     kickScheduler();
     return tasks;
   });
@@ -216,9 +216,11 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
     const task = ownedTask(request, reply);
     if (!task) return;
     if (!['queued', 'paused', 'running'].includes(task.status)) return task;
-    const row = db.prepare('SELECT provider_job_id FROM tasks WHERE id = ?').get(task.id) as Row;
+    const row = db.prepare('SELECT provider_job_id, operator_id FROM tasks WHERE id = ?').get(task.id) as Row;
     if (task.status === 'running' && row.provider_job_id) {
-      await provider.cancel(String(row.provider_job_id)).catch(() => undefined);
+      await getAdapter((row.operator_id as string | null) ?? null)
+        ?.cancel(String(row.provider_job_id))
+        .catch(() => undefined);
     }
     return setTask(task.id, { status: 'canceled', manual_kick: 0, provider_job_id: null, finished_at: now() });
   });

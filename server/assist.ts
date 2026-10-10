@@ -3,7 +3,8 @@
 // 方便在没有大模型的情况下把整个创作流程走通。
 import type { AssistKind } from '../shared/types.ts';
 import { config } from './config.ts';
-import { provider } from './providers/index.ts';
+import { openAiChat } from './providers/llm.ts';
+import { useMockAssist } from './providers/index.ts';
 
 type Dict = Record<string, unknown>;
 
@@ -59,8 +60,8 @@ function parseJsonLoose(text: string): Dict {
 }
 
 export async function runAssist(kind: AssistKind, input: Dict): Promise<Dict> {
-  if (config.provider === 'mock') return mockAssist(kind, input);
-  const content = await provider.chat(
+  if (useMockAssist()) return mockAssist(kind, input);
+  const content = await openAiChat(
     [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: buildPrompt(kind, input) },

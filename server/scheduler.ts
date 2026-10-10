@@ -11,7 +11,7 @@ import { publish } from './bus.ts';
 import { config } from './config.ts';
 import { db, now, type Row } from './db.ts';
 import { absoluteFile, deleteAssetFile, saveAsset } from './files.ts';
-import { getHealth, markUnavailable, provider, ProviderUnavailableError, type ProviderImageInput, type ProviderOutput } from './providers/index.ts';
+import { getAdapter, getHealth, markUnavailable, pickOperator, ProviderUnavailableError, type Provider, type ProviderImageInput, type ProviderOutput } from './providers/index.ts';
 import { logger } from './log.ts';
 import { getAssetRow, getTask, toAsset, toTask } from './repo.ts';
 
@@ -125,7 +125,7 @@ async function discardOutputs(outputs: ProviderOutput[]): Promise<void> {
   await Promise.all(outputs.map((output) => (output.filePath ? fs.rm(output.filePath, { force: true }) : undefined)));
 }
 
-async function complete(task: Task, outputs: ProviderOutput[], runSeed: number | null): Promise<void> {
+async function complete(task: Task, outputs: ProviderOutput[], runSeed: number | null, operatorName: string): Promise<void> {
   // 下载期间用户可能已经取消了任务：不再保存
   if (getTask(task.id)?.status !== 'running') {
     await discardOutputs(outputs);
@@ -158,7 +158,7 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
           duration: task.params.duration ?? null,
           steps: task.params.steps ?? null,
           negativePrompt: task.negativePrompt,
-          operator: provider.name,
+          operator: operatorName,
         },
       });
       saved.push({ id: asset.id, file: String((db.prepare('SELECT file FROM assets WHERE id = ?').get(asset.id) as Row).file) });
@@ -200,11 +200,11 @@ const lastPolledAt = new Map<string, number>();
 /** 正在查询或下载产物的任务：下载可能要几分钟，不能卡住调度节拍 */
 const inflight = new Set<string>();
 
-async function pollTask(task: Task, jobId: string, runSeed: number | null): Promise<void> {
+async function pollTask(task: Task, adapter: Provider, jobId: string, runSeed: number | null): Promise<void> {
   try {
-    const status = await provider.poll(jobId);
+    const status = await adapter.poll(jobId);
     if (status.state === 'succeeded') {
-      await complete(task, status.outputs ?? [], runSeed);
+      await complete(task, status.outputs ?? [], runSeed, adapter.name);
     } else if (status.state === 'failed') {
       fail(task, status.error ?? '生成失败');
     } else {
@@ -240,46 +240,55 @@ function pollRunning(): void {
       fail(task, '缺少生成服务任务号');
       continue;
     }
+    const adapter = getAdapter((row.operator_id as string | null) ?? null);
+    if (!adapter) {
+      fail(task, '执行这个任务的算子已被删除');
+      continue;
+    }
     const timeoutMs = capabilityOf(task.type) === 'video' ? config.videoJobTimeoutMs : config.jobTimeoutMs;
     if (task.startedAt && now() - task.startedAt > timeoutMs) {
-      void provider.cancel(jobId).catch(() => undefined);
+      void adapter.cancel(jobId).catch(() => undefined);
       fail(task, `生成超时（超过 ${Math.round(timeoutMs / 60_000)} 分钟）`);
       continue;
     }
-    const interval = provider.pollIntervalMs?.(jobId) ?? 0;
+    const interval = adapter.pollIntervalMs?.(jobId) ?? 0;
     if (now() - (lastPolledAt.get(task.id) ?? 0) < interval) continue;
     lastPolledAt.set(task.id, now());
     inflight.add(task.id);
     const runSeed = row.run_seed == null ? null : Number(row.run_seed);
-    void pollTask(task, jobId, runSeed)
+    void pollTask(task, adapter, jobId, runSeed)
       .catch((error) => logger.error({ err: error, taskId: task.id }, '查询任务进度失败'))
       .finally(() => inflight.delete(task.id));
   }
 }
 
 async function dispatch(): Promise<void> {
-  const running = Number((db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE status = 'running'").get() as Row).n);
-  let slots = config.maxRunning - running;
-  if (slots <= 0) return;
-
   const candidates = db
     .prepare(
-      `SELECT t.* FROM tasks t JOIN users u ON u.id = t.user_id
+      `SELECT t.*, u.role AS user_role FROM tasks t JOIN users u ON u.id = t.user_id
        WHERE t.status = 'queued' AND t.next_attempt_at <= ? AND (u.auto_dispatch = 1 OR t.manual_kick = 1)
        ORDER BY t.manual_kick DESC, t.priority DESC, t.created_at ASC LIMIT 50`,
     )
     .all(now()) as Row[];
   if (candidates.length === 0) return;
 
-  const health = await getHealth();
+  // 每个算子各自的在跑数，派发时按各自的并发上限挑
+  const running = new Map<string, number>();
+  for (const row of db.prepare("SELECT operator_id, COUNT(*) AS n FROM tasks WHERE status = 'running' GROUP BY operator_id").all() as Row[]) {
+    running.set(String(row.operator_id), Number(row.n));
+  }
+
   for (const row of candidates) {
-    if (slots <= 0) break;
     const task = toTask(row);
-    const capability = capabilityOf(task.type);
-    if (!health[capability]) {
-      setWaiting(task, health.message ? `生成服务不可用：${health.message}` : '生成服务暂不可用，等待重试');
+    const isAdmin = row.user_role === 'admin';
+    const pick = await pickOperator(task.type, isAdmin, running);
+    if (pick.reason === 'busy') continue; // 算子都满了：继续排队，不算等待
+    if (!pick.entry) {
+      // 普通用户只看到“算力暂时不可用”，看不到算子地址和报错细节
+      setWaiting(task, isAdmin ? `生成服务不可用：${pick.message}` : '算力暂时不可用，恢复后自动生成');
       continue;
     }
+    const { record, adapter } = pick.entry;
     let images: ProviderImageInput[];
     try {
       images = resolveImages(task);
@@ -289,8 +298,10 @@ async function dispatch(): Promise<void> {
       continue;
     }
     const seed = task.params.seed ?? randomSeed();
+    // 先占一个名额，提交是异步的，避免同一节拍里超发
+    running.set(record.id, (running.get(record.id) ?? 0) + 1);
     try {
-      const { jobId } = await provider.submit({
+      const { jobId } = await adapter.submit({
         taskId: task.id,
         type: task.type,
         prompt: task.prompt,
@@ -304,6 +315,7 @@ async function dispatch(): Promise<void> {
         {
           status: 'running',
           provider_job_id: jobId,
+          operator_id: record.id,
           run_seed: seed,
           attempts: task.attempts + 1,
           manual_kick: 0,
@@ -315,15 +327,16 @@ async function dispatch(): Promise<void> {
         ['queued'],
       );
       if (!changed) {
-        await provider.cancel(jobId).catch(() => undefined);
+        running.set(record.id, (running.get(record.id) ?? 1) - 1);
+        await adapter.cancel(jobId).catch(() => undefined);
         continue;
       }
       emitTask(task.id);
-      slots--;
     } catch (error) {
+      running.set(record.id, (running.get(record.id) ?? 1) - 1);
       if (error instanceof ProviderUnavailableError) {
-        markUnavailable(capability, error.message);
-        setWaiting(task, error.message);
+        markUnavailable(record.id, error.message);
+        setWaiting(task, isAdmin ? error.message : '算力暂时不可用，恢复后自动生成');
       } else {
         update(task.id, { attempts: task.attempts + 1, manual_kick: 0 }, ['queued']);
         fail(task, (error as Error).message);
@@ -363,7 +376,7 @@ export function kickScheduler(): void {
 let lastHealthKey = '';
 async function broadcastHealth(): Promise<void> {
   try {
-    const health = await getHealth();
+    const health = await getHealth(false, false, false);
     const key = `${health.image}${health.video}${health.llm}${health.message}`;
     if (key !== lastHealthKey) {
       lastHealthKey = key;

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { SiteInfo } from '../../shared/types.ts';
 import { createUser, endSession, findUserByEmail, hashPassword, startSession, verifyPassword } from '../auth.ts';
 import { config } from '../config.ts';
+import { db } from '../db.ts';
 import { getUserSettings, toUser } from '../repo.ts';
 import { bad, parse } from './common.ts';
 
@@ -33,6 +34,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (!row || !(await verifyPassword(body.password, row.password_hash))) {
       return bad(reply, '邮箱或密码错误', 401);
     }
+    if (row.disabled_at) return bad(reply, '账号已停用，请联系管理员', 403);
+    db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(Date.now(), String(row.id));
     startSession(reply, String(row.id));
     return { user: toUser(row), settings: getUserSettings(String(row.id)) };
   });

@@ -2,7 +2,7 @@
 // 业务代码（调度器、AI 助手）只依赖这里的 Provider 接口，
 // 具体对接 ComfyUI / MiniMax / 千问 Image / LLM 的细节都在各自的实现里。
 import type { Capabilities } from '../../shared/operator.ts';
-import type { Capability, GenParams, TaskType, TokenStatus } from '../../shared/types.ts';
+import type { GenParams, TaskType, TokenStatus } from '../../shared/types.ts';
 
 export interface ProviderImageInput {
   role: 'reference' | 'first_frame' | 'last_frame';
@@ -54,21 +54,53 @@ export interface ChatOptions {
   json?: boolean;
 }
 
+/** 单个算子实例的运行参数（来自 operators 表和加密的 secrets 表） */
+export interface OperatorSettings {
+  /** 查询图片 / 视频任务进度的间隔（毫秒） */
+  imagePollMs: number;
+  videoPollMs: number;
+}
+
+export interface OperatorContext {
+  id: string;
+  name: string;
+  baseUrl: string;
+  appid: string;
+  settings: OperatorSettings;
+  /** 读取加密保存的值：secret（密钥）、apiKey、token（令牌 JSON） */
+  secret(key: string): string | null;
+  saveSecret(key: string, value: string | null): void;
+}
+
+export interface OperatorHealth {
+  image: boolean;
+  video: boolean;
+  message?: string;
+}
+
+/** 算子适配器：每个算子实例一个对象，互不共享状态 */
 export interface Provider {
+  /** 适配器类型：comfyweb / http / mock */
+  readonly kind: string;
+  /** 实例名称（后台里填的名字） */
   readonly name: string;
   /** 能力声明：前端据此显示控件；不实现时用通用默认值 */
   capabilities?(): Capabilities;
-  health(): Promise<Record<Capability, boolean> & { message?: string }>;
+  health(): Promise<OperatorHealth>;
   submit(input: SubmitInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<JobStatus>;
-  /** 需要 token 的算子：查看 token 状态、立即校验、重新获取 */
+  cancel(jobId: string): Promise<void>;
+  /** 需要令牌的算子：查看状态、立即校验、重新获取、清除、手动填入、查看明文 */
   tokenStatus?(): TokenStatus;
   verifyToken?(): Promise<TokenStatus>;
   renewToken?(): Promise<TokenStatus>;
-  /** 两次查询之间的最短间隔（毫秒），不实现时每个调度节拍都查 */
+  clearToken?(): TokenStatus;
+  setManualToken?(token: string): TokenStatus;
+  revealToken?(): string | null;
+  /** 远端最近的任务（后台排查用） */
+  listRemote?(): Promise<unknown[]>;
+  /** 两次查询之间的最短间隔，不实现时每个调度节拍都查 */
   pollIntervalMs?(jobId: string): number;
-  cancel(jobId: string): Promise<void>;
-  chat(messages: ChatMessage[], options?: ChatOptions): Promise<string>;
 }
 
 /** 生成服务暂时不可用（网络不通、5xx、服务未启动），调度器会稍后重试且不计入失败次数 */

@@ -2,27 +2,27 @@
 // 接口协议见 docs/API_CONTRACT.md —— 他那边按协议实现，这边就不用再改业务代码。
 // 如果最终接口和协议不一致，只需要改这个文件。
 import fs from 'node:fs/promises';
-import { config } from '../config.ts';
 import {
   ProviderUnavailableError,
-  type ChatMessage,
-  type ChatOptions,
   type JobStatus,
+  type OperatorContext,
+  type OperatorHealth,
   type Provider,
   type SubmitInput,
 } from './types.ts';
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 60_000): Promise<T> {
-  if (!config.genApiBase) {
-    throw new ProviderUnavailableError('尚未配置 GEN_API_BASE（生成服务地址）');
+async function request<T>(ctx: OperatorContext, method: string, path: string, body?: unknown, timeoutMs = 60_000): Promise<T> {
+  if (!ctx.baseUrl) {
+    throw new ProviderUnavailableError('算子没有配置服务地址');
   }
+  const apiKey = ctx.secret('apiKey');
   let response: Response;
   try {
-    response = await fetch(`${config.genApiBase}${path}`, {
+    response = await fetch(`${ctx.baseUrl}${path}`, {
       method,
       headers: {
         'content-type': 'application/json',
-        ...(config.genApiKey ? { authorization: `Bearer ${config.genApiKey}` } : {}),
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
@@ -41,11 +41,19 @@ async function request<T>(method: string, path: string, body?: unknown, timeoutM
 }
 
 export class HttpProvider implements Provider {
-  readonly name = 'http';
+  readonly kind = 'http';
+  readonly name: string;
+  private readonly ctx: OperatorContext;
 
-  async health() {
+  constructor(ctx: OperatorContext) {
+    this.ctx = ctx;
+    this.name = ctx.name;
+  }
+
+  async health(): Promise<OperatorHealth> {
     try {
-      const result = await request<{ image?: boolean; video?: boolean; llm?: boolean; message?: string }>(
+      const result = await request<{ image?: boolean; video?: boolean; message?: string }>(
+        this.ctx,
         'GET',
         '/health',
         undefined,
@@ -54,11 +62,10 @@ export class HttpProvider implements Provider {
       return {
         image: Boolean(result.image),
         video: Boolean(result.video),
-        llm: Boolean(result.llm),
         message: result.message,
       };
     } catch (error) {
-      return { image: false, video: false, llm: false, message: (error as Error).message };
+      return { image: false, video: false, message: (error as Error).message };
     }
   }
 
@@ -70,7 +77,7 @@ export class HttpProvider implements Provider {
         data_base64: (await fs.readFile(image.path)).toString('base64'),
       })),
     );
-    const result = await request<{ job_id: string }>('POST', '/v1/jobs', {
+    const result = await request<{ job_id: string }>(this.ctx, 'POST', '/v1/jobs', {
       client_task_id: input.taskId,
       type: input.type,
       prompt: input.prompt,
@@ -101,7 +108,7 @@ export class HttpProvider implements Provider {
       progress?: number;
       error?: string;
       outputs?: { kind: 'image' | 'video'; mime: string; url?: string; base64?: string; width?: number; height?: number }[];
-    }>('GET', `/v1/jobs/${encodeURIComponent(jobId)}`, undefined, 15_000);
+    }>(this.ctx, 'GET', `/v1/jobs/${encodeURIComponent(jobId)}`, undefined, 15_000);
     return {
       state: result.state,
       progress: result.progress,
@@ -109,26 +116,12 @@ export class HttpProvider implements Provider {
       outputs: result.outputs?.map((output) => ({
         ...output,
         // 相对地址按服务根路径补全
-        url: output.url && output.url.startsWith('/') ? `${config.genApiBase}${output.url}` : output.url,
+        url: output.url && output.url.startsWith('/') ? `${this.ctx.baseUrl}${output.url}` : output.url,
       })),
     };
   }
 
   async cancel(jobId: string) {
-    await request('POST', `/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {});
-  }
-
-  async chat(messages: ChatMessage[], options: ChatOptions = {}) {
-    const result = await request<{ content: string }>(
-      'POST',
-      '/v1/chat',
-      {
-        messages,
-        temperature: options.temperature ?? 0.8,
-        response_format: options.json ? 'json' : 'text',
-      },
-      180_000,
-    );
-    return result.content;
+    await request(this.ctx, 'POST', `/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {});
   }
 }

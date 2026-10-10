@@ -13,7 +13,8 @@ import { parse, uid } from './common.ts';
 export async function publicSystemRoutes(app: FastifyInstance): Promise<void> {
   // 未登录只返回各能力是否可用，不暴露算子的报错细节
   app.get('/api/health', async (request) => {
-    const health = await getHealth();
+    const isAdmin = Boolean(request.user?.isAdmin);
+    const health = await getHealth(false, isAdmin, isAdmin);
     if (request.user) return health;
     return { provider: health.provider, image: health.image, video: health.video, llm: health.llm, checkedAt: health.checkedAt };
   });
@@ -40,9 +41,9 @@ export async function systemRoutes(api: FastifyInstance): Promise<void> {
     return getUserSettings(uid(request));
   });
 
-  api.post('/api/health/refresh', async () => getHealth(true));
+  api.post('/api/health/refresh', async (request) => getHealth(true, request.user!.isAdmin, request.user!.isAdmin));
 
-  api.get('/api/capabilities', async () => capabilities());
+  api.get('/api/capabilities', async (request) => capabilities(request.user!.isAdmin));
 
   // SSE：推送任务、资产与服务状态变化
   api.get('/api/events', (request, reply) => {
@@ -56,7 +57,7 @@ export async function systemRoutes(api: FastifyInstance): Promise<void> {
     });
     const send = (event: ServerEvent) => raw.write(`data: ${JSON.stringify(event)}\n\n`);
     raw.write('retry: 3000\n\n');
-    void getHealth().then((health) => send({ type: 'health', health }));
+    void getHealth(false, request.user!.isAdmin, request.user!.isAdmin).then((health) => send({ type: 'health', health }));
     const unsubscribe = subscribe(uid(request), send);
     const heartbeat = setInterval(() => raw.write(': ping\n\n'), 25_000);
     request.raw.on('close', () => {

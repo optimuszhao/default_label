@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { BookOpenText, Images, ListOrdered, Settings, Sparkles } from 'lucide-react';
+import { BookOpenText, Images, ListOrdered, Settings, ShieldCheck, Sparkles } from 'lucide-react';
 import { HealthPills, Logo } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { useStore } from '../../lib/store.ts';
@@ -65,6 +65,15 @@ export default function StudioLayout() {
               )}
             </NavLink>
           ))}
+          {user?.isAdmin && (
+            <NavLink
+              to="/admin"
+              className="mt-auto mb-2 flex h-9 items-center gap-2.5 rounded-lg px-3 text-[13px] text-fg-3 transition-colors hover:bg-white/[0.04] hover:text-fg max-lg:justify-center"
+            >
+              <ShieldCheck className="size-[18px] shrink-0" />
+              <span className="hidden lg:inline">管理后台</span>
+            </NavLink>
+          )}
         </nav>
         <div className="space-y-3 border-t border-line p-4 max-lg:hidden">
           <HealthPills />

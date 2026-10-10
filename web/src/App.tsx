@@ -14,6 +14,15 @@ const StoryEditor = lazy(() => import('./pages/studio/StoryEditor.tsx'));
 const Queue = lazy(() => import('./pages/studio/Queue.tsx'));
 const Assets = lazy(() => import('./pages/studio/Assets.tsx'));
 const Settings = lazy(() => import('./pages/studio/Settings.tsx'));
+// 管理后台单独分包，普通用户不会下载
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout.tsx'));
+const AdminOverview = lazy(() => import('./pages/admin/Overview.tsx'));
+const AdminOperatorList = lazy(() => import('./pages/admin/Operators.tsx').then((m) => ({ default: m.OperatorList })));
+const AdminOperatorDetail = lazy(() => import('./pages/admin/Operators.tsx').then((m) => ({ default: m.OperatorDetail })));
+const AdminTasks = lazy(() => import('./pages/admin/Tasks.tsx'));
+const AdminUsers = lazy(() => import('./pages/admin/Users.tsx'));
+const AdminBackups = lazy(() => import('./pages/admin/Backups.tsx'));
+const AdminAudit = lazy(() => import('./pages/admin/Audit.tsx'));
 
 function FullscreenLoader() {
   return (
@@ -21,6 +30,17 @@ function FullscreenLoader() {
       <Spinner />
     </div>
   );
+}
+
+/** 后台只对管理员开放；其他人当作页面不存在 */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const ready = useStore((state) => state.ready);
+  const user = useStore((state) => state.user);
+  const location = useLocation();
+  if (!ready) return <FullscreenLoader />;
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+  if (!user.isAdmin) return <Navigate to="/studio/create" replace />;
+  return <>{children}</>;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -63,6 +83,22 @@ export default function App() {
             <Route path="queue" element={<Queue />} />
             <Route path="assets" element={<Assets />} />
             <Route path="settings" element={<Settings />} />
+          </Route>
+          <Route
+            path="/admin"
+            element={
+              <RequireAdmin>
+                <AdminLayout />
+              </RequireAdmin>
+            }
+          >
+            <Route index element={<AdminOverview />} />
+            <Route path="operators" element={<AdminOperatorList />} />
+            <Route path="operators/:id" element={<AdminOperatorDetail />} />
+            <Route path="tasks" element={<AdminTasks />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="backups" element={<AdminBackups />} />
+            <Route path="audit" element={<AdminAudit />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -51,7 +51,7 @@ describe('PLT-04 迁移', () => {
     legacy.prepare("INSERT INTO users (id, email, name, password_hash, created_at) VALUES ('u1', 'old@x.com', '老用户', 'h', 1)").run();
 
     const first = runMigrations(legacy, { appVersion: '0.3.0', backupDir: path.join(dir, 'backups') });
-    assert.deepEqual(first.applied, ['0001_baseline', '0002_indexes']);
+    assert.deepEqual(first.applied.slice(0, 2), ['0001_baseline', '0002_indexes']);
     assert.ok(first.backupFile && fs.existsSync(first.backupFile), '迁移前有备份');
     const backup = new DatabaseSync(first.backupFile!, { readOnly: true });
     assert.equal((backup.prepare('SELECT email FROM users').get() as { email: string }).email, 'old@x.com');

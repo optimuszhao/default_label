@@ -24,9 +24,11 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 export function createUser(email: string, name: string, passwordHash: string): User {
   const id = newId('u_');
+  // ADMIN_EMAILS 里的邮箱注册时直接成为超级管理员
+  const role = config.adminEmails.includes(email.toLowerCase()) ? 'admin' : 'user';
   db.prepare(
-    'INSERT INTO users (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(id, email, name, passwordHash, now());
+    'INSERT INTO users (id, email, name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, email, name, passwordHash, role, now());
   return toUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id) as Row);
 }
 
@@ -60,9 +62,17 @@ export function endSession(request: FastifyRequest, reply: FastifyReply): void {
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
 }
 
+// 停用的账号即使还有会话也视为未登录
 const sessionStmt = db.prepare(
-  'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?',
+  'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.disabled_at IS NULL',
 );
+
+/** 启动时把 ADMIN_EMAILS 里的已有账号提升为超级管理员 */
+export function promoteConfiguredAdmins(): void {
+  for (const email of config.adminEmails) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE lower(email) = ? AND role != 'admin'").run(email);
+  }
+}
 
 export function userFromRequest(request: FastifyRequest): User | null {
   const token = request.cookies[SESSION_COOKIE];

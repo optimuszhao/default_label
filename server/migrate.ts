@@ -61,6 +61,10 @@ export function getMeta(db: DatabaseSync, key: string): string | null {
   return row?.value ?? null;
 }
 
+export function setMetaValue(db: DatabaseSync, key: string, value: string): void {
+  setMeta(db, key, value);
+}
+
 function setMeta(db: DatabaseSync, key: string, value: string): void {
   db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
 }

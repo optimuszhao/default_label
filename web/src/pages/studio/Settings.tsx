@@ -1,6 +1,5 @@
-import { useNavigate } from 'react-router-dom';
-import { LogOut, Server } from 'lucide-react';
-import { TokenCard } from '../../components/TokenCard.tsx';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowRight, LogOut, Server, ShieldCheck } from 'lucide-react';
 import { Button, HealthPills, Toggle } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError, useStore } from '../../lib/store.ts';
@@ -52,13 +51,21 @@ export default function Settings() {
           {health ? ` · ${timeAgo(health.checkedAt)}检查` : ''}
         </p>
         <p className="text-sm leading-relaxed text-fg-3">
-          生成服务和语言模型在服务端通过环境变量配置（<code className="rounded bg-white/5 px-1 font-mono text-fg-2">PROVIDER</code>、
-          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">GEN_API_BASE</code>、
-          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">LLM_API_BASE</code> 等），说明见仓库 README。
+          {user?.isAdmin ? '算子（生成服务）在管理后台里配置；' : '算力由管理员在后台配置；'}语言模型通过环境变量
+          <code className="mx-1 rounded bg-white/5 px-1 font-mono text-fg-2">LLM_API_BASE</code>配置。
         </p>
       </section>
 
-      {user?.isAdmin && <TokenCard />}
+      {user?.isAdmin && (
+        <Link to="/admin" className="panel flex items-center gap-3 p-5 transition-colors hover:border-line-strong">
+          <ShieldCheck className="size-5 text-accent" />
+          <div className="min-w-0 flex-1">
+            <h2 className="font-medium">管理后台</h2>
+            <p className="mt-0.5 text-sm text-fg-3">算子与令牌、全局任务、用户、备份、审计日志</p>
+          </div>
+          <ArrowRight className="size-4 text-fg-3" />
+        </Link>
+      )}
 
       <section className="panel flex items-center justify-between gap-4 p-5">
         <div>

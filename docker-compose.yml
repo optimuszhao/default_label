@@ -41,6 +41,8 @@ services:
       VIDEO_JOB_TIMEOUT_MS: ${VIDEO_JOB_TIMEOUT_MS:-5400000}
       # 通过 HTTPS 反向代理访问时设为 1
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # 加密算子密钥用的主密钥；不填会自动生成到 /data/master.key（备份时要一起备份）
+      MASTER_KEY: ${MASTER_KEY:-}
       # 超级管理员邮箱（逗号分隔）；REGISTRATION=closed 时只有这些邮箱能注册
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       REGISTRATION: ${REGISTRATION:-open}

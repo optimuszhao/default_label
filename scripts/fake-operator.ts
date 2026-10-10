@@ -71,6 +71,7 @@ let tokens = new Set<string>();
 let tasks = new Map<string, FakeTask>();
 let requests: { path: string; params: Record<string, unknown>; hasFile: boolean; at: number }[] = [];
 let counter = 0;
+let logins = 0;
 
 // ---------------- 产物文件 ----------------
 
@@ -240,9 +241,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     tokens = new Set();
     tasks = new Map();
     requests = [];
+    logins = 0;
     return send(res, 200, { ok: true });
   }
   if (pathname === '/__requests') return send(res, 200, requests);
+  if (pathname === '/__stats') return send(res, 200, { logins, tasks: tasks.size });
 
   // ---- 公开接口 ----
   if (pathname === '/health') {
@@ -256,6 +259,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
   if (pathname === '/api/auth/login' && req.method === 'POST') {
     const data = JSON.parse(body.toString() || '{}') as { appid?: string; secret?: string };
     if (data.appid !== APPID || data.secret !== SECRET) return send(res, 401, { detail: 'appid 或 secret 错误' });
+    logins++;
     const token = `fake.${randomUUID()}`;
     tokens.add(token);
     return send(res, 200, { token, appid: APPID, user_id: 1 });

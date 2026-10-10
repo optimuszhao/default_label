@@ -10,8 +10,9 @@ import path from 'node:path';
 import { config } from '../config.ts';
 import {
   ProviderUnavailableError,
-  type ChatMessage,
   type JobStatus,
+  type OperatorContext,
+  type OperatorHealth,
   type Provider,
   type ProviderOutput,
   type SubmitInput,
@@ -156,14 +157,18 @@ function flakyAvailable(capability: string): boolean {
 }
 
 export class MockProvider implements Provider {
-  readonly name = 'mock';
+  readonly kind = 'mock';
+  readonly name: string;
 
-  async health() {
+  constructor(ctx: OperatorContext) {
+    this.name = ctx.name;
+  }
+
+  async health(): Promise<OperatorHealth> {
     return {
       image: flakyAvailable('image'),
       video: flakyAvailable('video'),
-      llm: flakyAvailable('llm'),
-      message: config.mockFlaky ? '模拟服务（不稳定模式）' : '模拟服务',
+      message: config.mockFlaky ? '模拟服务（不稳定模式）' : undefined,
     };
   }
 
@@ -202,10 +207,5 @@ export class MockProvider implements Provider {
   async cancel(jobId: string) {
     const job = jobs.get(jobId);
     if (job) job.canceled = true;
-  }
-
-  async chat(messages: ChatMessage[]) {
-    const last = messages.at(-1)?.content ?? '';
-    return `（模拟 LLM 输出）${last.slice(0, 200)}`;
   }
 }

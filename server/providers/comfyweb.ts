@@ -23,13 +23,11 @@ import { DEFAULT_CAPABILITIES, IMAGE_RESOLUTIONS, type Capabilities } from '../.
 import type { TokenStatus } from '../../shared/types.ts';
 import { newTempFile } from '../files.ts';
 import { logger } from '../log.ts';
-import { config } from '../config.ts';
-import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
 import {
   ProviderUnavailableError,
-  type ChatMessage,
-  type ChatOptions,
   type JobStatus,
+  type OperatorContext,
+  type OperatorHealth,
   type Provider,
   type ProviderImageInput,
   type ProviderOutput,
@@ -49,28 +47,12 @@ const MIME_BY_EXT: Record<string, string> = {
   mov: 'video/quicktime',
 };
 
-/** 对方 token 有效期 72 小时，提前 1 小时主动换新，避免长视频任务中途过期 */
-const TOKEN_TTL_MS = 71 * 60 * 60 * 1000;
+/** 对方 token 有效期 72 小时（文档）；JWT 里有 exp 时以 exp 为准 */
+const TOKEN_LIFETIME_MS = 72 * 60 * 60 * 1000;
+/** 提前这么久换新，避免长视频任务中途过期 */
+const RENEW_BEFORE_MS = 60 * 60 * 1000;
 /** 健康检查里校验 token 的间隔 */
 const VERIFY_EVERY_MS = 5 * 60 * 1000;
-
-const TOKEN_LIFETIME_MS = 72 * 60 * 60 * 1000;
-
-let token = config.comfyToken;
-/** 到这个时间就主动换新（比真实到期早 1 小时） */
-let tokenExpiresAt = token ? Number.POSITIVE_INFINITY : 0;
-let verifiedAt = 0;
-
-/** 给管理员看的令牌状态 */
-const status = {
-  issuedAt: null as number | null,
-  expiresAt: null as number | null,
-  expiresBasis: (config.comfyToken ? 'env' : null) as TokenStatus['expiresBasis'],
-  lastVerifyAt: null as number | null,
-  lastVerifyOk: null as boolean | null,
-  lastVerifyMessage: null as string | null,
-  lastLoginError: null as string | null,
-};
 
 /** token 是 JWT 时读出真实到期时间 */
 function jwtExpiry(value: string): number | null {
@@ -84,108 +66,6 @@ function jwtExpiry(value: string): number | null {
   }
 }
 
-function recordVerify(ok: boolean, message: string | null): void {
-  status.lastVerifyAt = Date.now();
-  status.lastVerifyOk = ok;
-  status.lastVerifyMessage = message;
-}
-let loginInflight: Promise<string> | null = null;
-const warned = new Set<string>();
-
-function base(): string {
-  if (!config.genApiBase) throw new ProviderUnavailableError('尚未配置 GEN_API_BASE（生成服务地址）');
-  return config.genApiBase;
-}
-
-function warnOnce(key: string, message: string, data: unknown): void {
-  if (warned.has(key)) return;
-  warned.add(key);
-  logger.warn({ operator: 'comfyweb', raw: JSON.stringify(data).slice(0, 2000) }, message);
-}
-
-function credentials(): Json {
-  if (config.comfyAppId && config.comfySecret) return { appid: config.comfyAppId, secret: config.comfySecret };
-  // 旧版接口用邮箱账号登录，保留兼容
-  if (config.comfyEmail && config.comfyPassword) return { email: config.comfyEmail, password: config.comfyPassword };
-  throw new ProviderUnavailableError('尚未配置 COMFY_APPID / COMFY_SECRET（生成服务的 API ID 和密钥）');
-}
-
-async function login(): Promise<string> {
-  let body: string;
-  try {
-    body = JSON.stringify(credentials());
-  } catch (error) {
-    status.lastLoginError = (error as Error).message;
-    throw error;
-  }
-  loginInflight ??= (async () => {
-    let response: Response;
-    try {
-      response = await fetch(`${base()}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-        signal: AbortSignal.timeout(15_000),
-      });
-    } catch (error) {
-      throw new ProviderUnavailableError(`无法连接生成服务：${(error as Error).message}`);
-    }
-    const data = (await response.json().catch(() => ({}))) as Json;
-    if (response.status >= 500) throw new ProviderUnavailableError(`生成服务登录失败（HTTP ${response.status}）`);
-    if (!response.ok || typeof data.token !== 'string' || !data.token) {
-      // 密钥错误属于配置问题，任务继续排队等管理员修正，不消耗重试次数
-      throw new ProviderUnavailableError(`生成服务登录失败：${errorText(data) ?? `HTTP ${response.status}`}`);
-    }
-    token = data.token;
-    const issuedAt = Date.now();
-    const exp = jwtExpiry(token);
-    status.issuedAt = issuedAt;
-    status.expiresAt = exp ?? issuedAt + TOKEN_LIFETIME_MS;
-    status.expiresBasis = exp ? 'jwt' : 'assumed';
-    status.lastLoginError = null;
-    // 提前 1 小时换新，避免长视频任务中途过期
-    tokenExpiresAt = exp ? exp - 3600_000 : issuedAt + TOKEN_TTL_MS;
-    verifiedAt = Date.now();
-    return token;
-  })()
-    .catch((error) => {
-      status.lastLoginError = (error as Error).message;
-      throw error;
-    })
-    .finally(() => {
-      loginInflight = null;
-    });
-  return loginInflight;
-}
-
-function forgetToken(): void {
-  token = '';
-  tokenExpiresAt = 0;
-  verifiedAt = 0;
-  status.issuedAt = null;
-  status.expiresAt = null;
-  status.expiresBasis = null;
-}
-
-/** 调用 /api/auth/verify 校验当前 token（没有 token 时会先登录） */
-async function verifyNow(): Promise<void> {
-  const response = await call('GET', '/api/auth/verify', undefined, true, 10_000);
-  const data = (await response.json().catch(() => ({}))) as Json;
-  if (!response.ok || data.valid === false) {
-    const message = `生成服务凭证无效：${errorText(data) ?? `HTTP ${response.status}`}`;
-    recordVerify(false, message);
-    forgetToken();
-    throw new ProviderUnavailableError(message);
-  }
-  verifiedAt = Date.now();
-  recordVerify(true, typeof data.appid === 'string' ? `appid ${data.appid} 有效` : 'token 有效');
-}
-
-async function ensureToken(): Promise<string> {
-  if (!token || Date.now() >= tokenExpiresAt) return login();
-  return token;
-}
-
 function errorText(data: unknown): string | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Json;
@@ -195,50 +75,6 @@ function errorText(data: unknown): string | null {
   }
   for (const key of ['error', 'message', 'msg']) if (typeof d[key] === 'string' && d[key]) return d[key] as string;
   return null;
-}
-
-/** 带登录态的请求：401 时自动重新登录一次；5xx / 网络错误视为服务暂不可用 */
-async function call(method: string, pathname: string, body?: BodyInit, json = true, timeoutMs = 60_000): Promise<Response> {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await ensureToken();
-    let response: Response;
-    try {
-      response = await fetch(`${base()}${pathname}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(json && body !== undefined ? { 'content-type': 'application/json' } : {}),
-        },
-        body,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (error) {
-      throw new ProviderUnavailableError(`无法连接生成服务：${(error as Error).message}`);
-    }
-    if (response.status === 401 && attempt === 0) {
-      forgetToken();
-      continue;
-    }
-    if (response.status >= 500 || response.status === 429 || response.status === 401) {
-      const text = await response.text().catch(() => '');
-      throw new ProviderUnavailableError(`生成服务暂不可用（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ''}`);
-    }
-    return response;
-  }
-  throw new ProviderUnavailableError('生成服务登录失效');
-}
-
-async function callJson(method: string, pathname: string, body?: BodyInit, json = true): Promise<Json> {
-  const response = await call(method, pathname, body, json);
-  const text = await response.text();
-  let data: unknown = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-  if (!response.ok) throw new Error(errorText(data) ?? `生成服务返回错误（HTTP ${response.status}）`);
-  return (data && typeof data === 'object' ? data : { value: data }) as Json;
 }
 
 const round = (value: number, step: number) => Math.max(step, Math.round(value / step) * step);
@@ -259,71 +95,11 @@ function videoPrompt(input: SubmitInput): string {
   return motion && motion !== '自动' ? `${input.prompt}。镜头运动：${motion}` : input.prompt;
 }
 
-async function submitOne(input: SubmitInput, seedOffset: number): Promise<string> {
-  const seed = input.params.seed == null ? 0 : input.params.seed + seedOffset;
-  let data: Json;
-  switch (input.type) {
-    case 't2i':
-      data = await callJson(
-        'POST',
-        '/api/generate/text2img',
-        JSON.stringify({
-          prompt: input.prompt,
-          negative_prompt: input.negativePrompt,
-          width: round(input.params.width, 16),
-          height: round(input.params.height, 16),
-          steps: input.params.steps ?? 25,
-          seed,
-        }),
-      );
-      break;
-    case 'i2i': {
-      const reference = input.images.find((image) => image.role === 'reference');
-      if (!reference) throw new Error('图生图缺少参考图');
-      const form = new FormData();
-      form.append('file', await imagePart(reference), path.basename(reference.path));
-      form.append('prompt', input.prompt);
-      form.append('negative_prompt', input.negativePrompt);
-      form.append('width', String(round(input.params.width, 16)));
-      form.append('height', String(round(input.params.height, 16)));
-      form.append('steps', String(input.params.steps ?? 25));
-      form.append('seed', String(seed));
-      data = await callJson('POST', '/api/generate/img2img', form, false);
-      break;
-    }
-    case 't2v':
-      data = await callJson(
-        'POST',
-        '/api/generate/text2video',
-        JSON.stringify({
-          prompt: videoPrompt(input),
-          duration: Math.min(15, Math.max(4, input.params.duration ?? 5)),
-          width: round(input.params.width, 32),
-          height: round(input.params.height, 32),
-          seed,
-        }),
-      );
-      break;
-    case 'i2v': {
-      const first = input.images.find((image) => image.role === 'first_frame');
-      if (!first) throw new Error('图生视频缺少首帧');
-      const form = new FormData();
-      form.append('file', await imagePart(first), path.basename(first.path));
-      form.append('prompt', videoPrompt(input));
-      form.append('duration', String(Math.min(15, Math.max(4, input.params.duration ?? 5))));
-      form.append('width', String(round(input.params.width, 32)));
-      form.append('height', String(round(input.params.height, 32)));
-      form.append('seed', String(seed));
-      data = await callJson('POST', '/api/generate/img2video', form, false);
-      break;
-    }
-  }
-  const id = findTaskId(data);
-  if (!id) {
-    warnOnce('submit', '提交响应里没有找到任务号', data);
-    throw new Error('生成服务没有返回任务号');
-  }
-  return id;
+interface StoredToken {
+  token: string;
+  issuedAt: number | null;
+  expiresAt: number | null;
+  basis: TokenStatus['expiresBasis'];
 }
 
 // ---------------- 解析任务结果 ----------------
@@ -356,66 +132,6 @@ function downloadPath(file: string, category: 'image' | 'video'): string {
   if (file.startsWith('/')) return file;
   // 只有文件名：走产物下载接口 /api/products/download/{category}/{filename}
   return `/api/products/download/${category}/${encodeURIComponent(path.basename(file))}`;
-}
-
-/** 只有和算子同源的地址才带 token，防止凭证被发到别的主机 */
-function sameOrigin(url: string): boolean {
-  try {
-    return new URL(url).origin === new URL(base()).origin;
-  } catch {
-    return false;
-  }
-}
-
-/** 流式写入临时文件并计算 sha256，不把整段视频读进内存 */
-async function download(file: OutputFile): Promise<ProviderOutput> {
-  const kind = kindOf(file.name, file.category);
-  const target = downloadPath(file.name, file.category);
-  // 超分后的视频可能有几十 MB，给足下载时间
-  let response: Response;
-  if (/^https?:\/\//i.test(target)) {
-    const headers: Record<string, string> = sameOrigin(target) ? { authorization: `Bearer ${await ensureToken()}` } : {};
-    try {
-      response = await fetch(target, { headers, signal: AbortSignal.timeout(600_000) });
-    } catch (error) {
-      throw new ProviderUnavailableError(`下载生成结果失败：${(error as Error).message}`);
-    }
-  } else {
-    response = await call('GET', target, undefined, false, 600_000);
-  }
-  if (response.status === 404) throw new Error(`生成服务上找不到产物文件：${path.basename(file.name)}`);
-  if (!response.ok || !response.body) {
-    throw new ProviderUnavailableError(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file.name)}`);
-  }
-  const ext = path.extname(file.name.split('?')[0]).slice(1).toLowerCase();
-  const mime = MIME_BY_EXT[ext] ?? response.headers.get('content-type')?.split(';')[0] ?? (kind === 'video' ? 'video/mp4' : 'image/png');
-  const temp = await newTempFile();
-  const hash = createHash('sha256');
-  let bytes = 0;
-  const meter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      hash.update(chunk);
-      bytes += chunk.length;
-      callback(null, chunk);
-    },
-  });
-  try {
-    await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(temp));
-  } catch (error) {
-    await fs.rm(temp, { force: true });
-    throw new ProviderUnavailableError(`下载生成结果中断：${(error as Error).message}`);
-  }
-  const expected = Number(response.headers.get('content-length'));
-  if (expected && bytes !== expected) {
-    await fs.rm(temp, { force: true });
-    throw new ProviderUnavailableError(`下载生成结果不完整（${bytes}/${expected} 字节）`);
-  }
-  if (!bytes) {
-    await fs.rm(temp, { force: true });
-    throw new Error(`生成服务返回了空文件：${path.basename(file.name)}`);
-  }
-  logger.info({ operator: 'comfyweb', file: path.basename(file.name), bytes, sha256: hash.digest('hex').slice(0, 16) }, '已下载产物');
-  return { kind, mime, filePath: temp };
 }
 
 function progressOf(data: Json): number | undefined {
@@ -482,35 +198,10 @@ function outputFiles(data: Json, kind: 'image' | 'video'): OutputFile[] {
   return names.map((name) => ({ name, category: kindOf(name, category) }));
 }
 
-async function pollOne(id: string, kind: 'image' | 'video'): Promise<SubJob> {
-  const raw = await callJson('GET', `/api/tasks/${encodeURIComponent(id)}`);
-  const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Json;
-  const status = String(data.status ?? data.state ?? '').toLowerCase();
-  const stage = (typeof data.stage === 'string' && data.stage.trim()) || STAGE_FALLBACK[status];
-  if (status === 'failed' || status === 'error') {
-    runningSince.delete(id);
-    return { id, state: 'failed', progress: 0, files: [], error: errorText(data) ?? (data.error_message as string) ?? '生成失败' };
-  }
-  if (status === 'completed' || status === 'succeeded' || status === 'success' || status === 'done') {
-    runningSince.delete(id);
-    const files = outputFiles(data, kind);
-    if (!files.length) warnOnce('completed-no-files', '任务已完成，但响应里没找到产物文件', raw);
-    return { id, state: 'succeeded', progress: 1, files };
-  }
-  const progress = progressOf(data) ?? estimate(id, kind, status);
-  if (status === 'running' || status === 'postprocessing' || status === 'processing') {
-    return { id, state: 'running', progress, stage, files: [] };
-  }
-  if (status !== 'pending' && status !== 'queued') warnOnce(`status-${status}`, `未知的任务状态「${status}」`, raw);
-  return { id, state: 'pending', progress, stage, files: [] };
-}
-
 function parseJobId(jobId: string): { kind: 'image' | 'video'; ids: string[] } {
   const [kind, list] = jobId.includes(':') ? (jobId.split(':', 2) as ['image' | 'video', string]) : (['image', jobId] as const);
   return { kind: kind === 'video' ? 'video' : 'image', ids: list.split(',').filter(Boolean) };
 }
-
-// ---------------- Provider ----------------
 
 /**
  * 按接口文档声明能力：图生图只收一张参考图、没有重绘强度和 CFG；
@@ -552,17 +243,359 @@ const COMFYWEB_CAPABILITIES: Capabilities = {
 };
 
 export class ComfyWebProvider implements Provider {
-  readonly name = 'comfyweb';
+  readonly kind = 'comfyweb';
+  readonly name: string;
+  private readonly ctx: OperatorContext;
+  private token = '';
+  /** 到这个时间就主动换新 */
+  private refreshAt = 0;
+  private verifiedAt = 0;
+  private loginInflight: Promise<string> | null = null;
+  private readonly warned = new Set<string>();
+  private readonly status = {
+    issuedAt: null as number | null,
+    expiresAt: null as number | null,
+    expiresBasis: null as TokenStatus['expiresBasis'],
+    lastVerifyAt: null as number | null,
+    lastVerifyOk: null as boolean | null,
+    lastVerifyMessage: null as string | null,
+    lastLoginError: null as string | null,
+  };
+
+  constructor(ctx: OperatorContext) {
+    this.ctx = ctx;
+    this.name = ctx.name;
+    // 重启后恢复上次保存的令牌，不必重新登录
+    const saved = ctx.secret('token');
+    if (saved) {
+      try {
+        this.adopt(JSON.parse(saved) as StoredToken, false);
+      } catch {
+        ctx.saveSecret('token', null);
+      }
+    }
+  }
 
   capabilities(): Capabilities {
     return COMFYWEB_CAPABILITIES;
   }
 
-  async health() {
+  // ---------------- 令牌 ----------------
+
+  private base(): string {
+    if (!this.ctx.baseUrl) throw new ProviderUnavailableError('算子没有配置服务地址');
+    return this.ctx.baseUrl;
+  }
+
+  private warnOnce(key: string, message: string, data: unknown): void {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    logger.warn({ operator: this.ctx.id, raw: JSON.stringify(data).slice(0, 2000) }, message);
+  }
+
+  private adopt(stored: StoredToken, persist = true): void {
+    this.token = stored.token;
+    this.status.issuedAt = stored.issuedAt;
+    this.status.expiresAt = stored.expiresAt;
+    this.status.expiresBasis = stored.basis;
+    this.refreshAt = stored.expiresAt ? stored.expiresAt - RENEW_BEFORE_MS : Number.POSITIVE_INFINITY;
+    if (persist) this.ctx.saveSecret('token', JSON.stringify(stored));
+  }
+
+  private forgetToken(): void {
+    this.token = '';
+    this.refreshAt = 0;
+    this.verifiedAt = 0;
+    this.status.issuedAt = null;
+    this.status.expiresAt = null;
+    this.status.expiresBasis = null;
+    this.ctx.saveSecret('token', null);
+  }
+
+  private recordVerify(ok: boolean, message: string | null): void {
+    this.status.lastVerifyAt = Date.now();
+    this.status.lastVerifyOk = ok;
+    this.status.lastVerifyMessage = message;
+  }
+
+  private credentials(): Json {
+    const secret = this.ctx.secret('secret');
+    if (this.ctx.appid && secret) return { appid: this.ctx.appid, secret };
+    throw new ProviderUnavailableError('算子没有配置 API ID 和密钥');
+  }
+
+  private async login(): Promise<string> {
+    let body: string;
+    try {
+      body = JSON.stringify(this.credentials());
+    } catch (error) {
+      this.status.lastLoginError = (error as Error).message;
+      throw error;
+    }
+    this.loginInflight ??= (async () => {
+      let response: Response;
+      try {
+        response = await fetch(`${this.base()}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (error) {
+        throw new ProviderUnavailableError(`无法连接生成服务：${(error as Error).message}`);
+      }
+      const data = (await response.json().catch(() => ({}))) as Json;
+      if (response.status >= 500) throw new ProviderUnavailableError(`生成服务登录失败（HTTP ${response.status}）`);
+      if (!response.ok || typeof data.token !== 'string' || !data.token) {
+        // 密钥错误属于配置问题，任务继续排队等管理员修正，不消耗重试次数
+        throw new ProviderUnavailableError(`生成服务登录失败：${errorText(data) ?? `HTTP ${response.status}`}`);
+      }
+      const issuedAt = Date.now();
+      const exp = jwtExpiry(data.token);
+      this.adopt({ token: data.token, issuedAt, expiresAt: exp ?? issuedAt + TOKEN_LIFETIME_MS, basis: exp ? 'jwt' : 'assumed' });
+      this.status.lastLoginError = null;
+      this.verifiedAt = Date.now();
+      logger.info({ operator: this.ctx.id }, '已换取算子令牌');
+      return this.token;
+    })()
+      .catch((error) => {
+        this.status.lastLoginError = (error as Error).message;
+        throw error;
+      })
+      .finally(() => {
+        this.loginInflight = null;
+      });
+    return this.loginInflight;
+  }
+
+  private async ensureToken(): Promise<string> {
+    if (!this.token || Date.now() >= this.refreshAt) return this.login();
+    return this.token;
+  }
+
+  /** 调用 /api/auth/verify 校验当前 token（没有 token 时会先登录） */
+  private async verifyNow(): Promise<Json> {
+    const response = await this.call('GET', '/api/auth/verify', undefined, true, 10_000);
+    const data = (await response.json().catch(() => ({}))) as Json;
+    if (!response.ok || data.valid === false) {
+      const message = `生成服务凭证无效：${errorText(data) ?? `HTTP ${response.status}`}`;
+      this.recordVerify(false, message);
+      this.forgetToken();
+      throw new ProviderUnavailableError(message);
+    }
+    this.verifiedAt = Date.now();
+    const who = [typeof data.appid === 'string' ? `appid=${data.appid}` : '', data.user_id != null ? `user_id=${data.user_id}` : '']
+      .filter(Boolean)
+      .join(' · ');
+    this.recordVerify(true, who || '令牌有效');
+    return data;
+  }
+
+  /** 带登录态的请求：401 时自动重新登录一次；5xx / 网络错误视为服务暂不可用 */
+  private async call(method: string, pathname: string, body?: BodyInit, json = true, timeoutMs = 60_000): Promise<Response> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await this.ensureToken();
+      let response: Response;
+      try {
+        response = await fetch(`${this.base()}${pathname}`, {
+          method,
+          headers: {
+            authorization: `Bearer ${this.token}`,
+            ...(json && body !== undefined ? { 'content-type': 'application/json' } : {}),
+          },
+          body,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        throw new ProviderUnavailableError(`无法连接生成服务：${(error as Error).message}`);
+      }
+      if (response.status === 401 && attempt === 0) {
+        this.forgetToken();
+        continue;
+      }
+      if (response.status >= 500 || response.status === 429 || response.status === 401) {
+        const text = await response.text().catch(() => '');
+        throw new ProviderUnavailableError(`生成服务暂不可用（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ''}`);
+      }
+      return response;
+    }
+    throw new ProviderUnavailableError('生成服务登录失效');
+  }
+
+  private async callJson(method: string, pathname: string, body?: BodyInit, json = true): Promise<Json> {
+    const response = await this.call(method, pathname, body, json);
+    const text = await response.text();
+    let data: unknown = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    if (!response.ok) throw new Error(errorText(data) ?? `生成服务返回错误（HTTP ${response.status}）`);
+    return (data && typeof data === 'object' ? data : { value: data }) as Json;
+  }
+
+  // ---------------- 提交 ----------------
+
+  private async submitOne(input: SubmitInput, seedOffset: number): Promise<string> {
+    const seed = input.params.seed == null ? 0 : input.params.seed + seedOffset;
+    let data: Json;
+    switch (input.type) {
+      case 't2i':
+        data = await this.callJson(
+          'POST',
+          '/api/generate/text2img',
+          JSON.stringify({
+            prompt: input.prompt,
+            negative_prompt: input.negativePrompt,
+            width: round(input.params.width, 16),
+            height: round(input.params.height, 16),
+            steps: input.params.steps ?? 25,
+            seed,
+          }),
+        );
+        break;
+      case 'i2i': {
+        const reference = input.images.find((image) => image.role === 'reference');
+        if (!reference) throw new Error('图生图缺少参考图');
+        const form = new FormData();
+        form.append('file', await imagePart(reference), path.basename(reference.path));
+        form.append('prompt', input.prompt);
+        form.append('negative_prompt', input.negativePrompt);
+        form.append('width', String(round(input.params.width, 16)));
+        form.append('height', String(round(input.params.height, 16)));
+        form.append('steps', String(input.params.steps ?? 25));
+        form.append('seed', String(seed));
+        data = await this.callJson('POST', '/api/generate/img2img', form, false);
+        break;
+      }
+      case 't2v':
+        data = await this.callJson(
+          'POST',
+          '/api/generate/text2video',
+          JSON.stringify({
+            prompt: videoPrompt(input),
+            duration: Math.min(15, Math.max(4, input.params.duration ?? 5)),
+            width: round(input.params.width, 32),
+            height: round(input.params.height, 32),
+            seed,
+          }),
+        );
+        break;
+      case 'i2v': {
+        const first = input.images.find((image) => image.role === 'first_frame');
+        if (!first) throw new Error('图生视频缺少首帧');
+        const form = new FormData();
+        form.append('file', await imagePart(first), path.basename(first.path));
+        form.append('prompt', videoPrompt(input));
+        form.append('duration', String(Math.min(15, Math.max(4, input.params.duration ?? 5))));
+        form.append('width', String(round(input.params.width, 32)));
+        form.append('height', String(round(input.params.height, 32)));
+        form.append('seed', String(seed));
+        data = await this.callJson('POST', '/api/generate/img2video', form, false);
+        break;
+      }
+    }
+    const id = findTaskId(data);
+    if (!id) {
+      this.warnOnce('submit', '提交响应里没有找到任务号', data);
+      throw new Error('生成服务没有返回任务号');
+    }
+    return id;
+  }
+
+  // ---------------- 查询与下载 ----------------
+
+  /** 只有和算子同源的地址才带 token，防止凭证被发到别的主机 */
+  private sameOrigin(url: string): boolean {
+    try {
+      return new URL(url).origin === new URL(this.base()).origin;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 流式写入临时文件并计算 sha256，不把整段视频读进内存 */
+  private async download(file: OutputFile): Promise<ProviderOutput> {
+    const kind = kindOf(file.name, file.category);
+    const target = downloadPath(file.name, file.category);
+    // 超分后的视频可能有几十 MB，给足下载时间
+    let response: Response;
+    if (/^https?:\/\//i.test(target)) {
+      const headers: Record<string, string> = this.sameOrigin(target) ? { authorization: `Bearer ${await this.ensureToken()}` } : {};
+      try {
+        response = await fetch(target, { headers, signal: AbortSignal.timeout(600_000) });
+      } catch (error) {
+        throw new ProviderUnavailableError(`下载生成结果失败：${(error as Error).message}`);
+      }
+    } else {
+      response = await this.call('GET', target, undefined, false, 600_000);
+    }
+    if (response.status === 404) throw new Error(`生成服务上找不到产物文件：${path.basename(file.name)}`);
+    if (!response.ok || !response.body) {
+      throw new ProviderUnavailableError(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file.name)}`);
+    }
+    const ext = path.extname(file.name.split('?')[0]).slice(1).toLowerCase();
+    const mime = MIME_BY_EXT[ext] ?? response.headers.get('content-type')?.split(';')[0] ?? (kind === 'video' ? 'video/mp4' : 'image/png');
+    const temp = await newTempFile();
+    const hash = createHash('sha256');
+    let bytes = 0;
+    const meter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        hash.update(chunk);
+        bytes += chunk.length;
+        callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(temp));
+    } catch (error) {
+      await fs.rm(temp, { force: true });
+      throw new ProviderUnavailableError(`下载生成结果中断：${(error as Error).message}`);
+    }
+    const expected = Number(response.headers.get('content-length'));
+    if (expected && bytes !== expected) {
+      await fs.rm(temp, { force: true });
+      throw new ProviderUnavailableError(`下载生成结果不完整（${bytes}/${expected} 字节）`);
+    }
+    if (!bytes) {
+      await fs.rm(temp, { force: true });
+      throw new Error(`生成服务返回了空文件：${path.basename(file.name)}`);
+    }
+    logger.info({ operator: this.ctx.id, file: path.basename(file.name), bytes, sha256: hash.digest('hex').slice(0, 16) }, '已下载产物');
+    return { kind, mime, filePath: temp };
+  }
+
+  private async pollOne(id: string, kind: 'image' | 'video'): Promise<SubJob> {
+    const raw = await this.callJson('GET', `/api/tasks/${encodeURIComponent(id)}`);
+    const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Json;
+    const status = String(data.status ?? data.state ?? '').toLowerCase();
+    const stage = (typeof data.stage === 'string' && data.stage.trim()) || STAGE_FALLBACK[status];
+    if (status === 'failed' || status === 'error') {
+      runningSince.delete(id);
+      return { id, state: 'failed', progress: 0, files: [], error: errorText(data) ?? (data.error_message as string) ?? '生成失败' };
+    }
+    if (status === 'completed' || status === 'succeeded' || status === 'success' || status === 'done') {
+      runningSince.delete(id);
+      const files = outputFiles(data, kind);
+      if (!files.length) this.warnOnce('completed-no-files', '任务已完成，但响应里没找到产物文件', raw);
+      return { id, state: 'succeeded', progress: 1, files };
+    }
+    const progress = progressOf(data) ?? estimate(id, kind, status);
+    if (status === 'running' || status === 'postprocessing' || status === 'processing') {
+      return { id, state: 'running', progress, stage, files: [] };
+    }
+    if (status !== 'pending' && status !== 'queued') this.warnOnce(`status-${status}`, `未知的任务状态「${status}」`, raw);
+    return { id, state: 'pending', progress, stage, files: [] };
+  }
+
+  // ---------------- Provider 接口 ----------------
+
+  async health(): Promise<OperatorHealth> {
     let reachable = false;
     let message: string | undefined;
     try {
-      const response = await fetch(`${base()}/health`, { signal: AbortSignal.timeout(5_000) });
+      const response = await fetch(`${this.base()}/health`, { signal: AbortSignal.timeout(5_000) });
       reachable = response.ok;
       let verifyEvery = VERIFY_EVERY_MS;
       if (response.status === 404) {
@@ -582,72 +615,32 @@ export class ComfyWebProvider implements Provider {
           message = 'ComfyUI 未连接';
         }
       }
-      // 服务在线时顺便确认凭证可用（每 5 分钟一次）：密钥配错时在设置页直接看到原因
-      if (reachable && Date.now() - verifiedAt > verifyEvery) await verifyNow();
+      // 服务在线时顺便确认凭证可用：密钥配错时后台直接看到原因
+      if (reachable && Date.now() - this.verifiedAt > verifyEvery) await this.verifyNow();
     } catch (error) {
       reachable = false;
       message = (error as Error).message;
     }
-    const llm = llmConfigured() ? await llmHealthy() : false;
-    return {
-      image: reachable,
-      video: reachable,
-      llm,
-      message: message ?? (llmConfigured() ? undefined : '未配置语言模型，AI 写作助手不可用'),
-    };
+    return { image: reachable, video: reachable, message };
   }
 
   async submit(input: SubmitInput) {
     // 对方每次只出一个结果；多张图拆成多个任务，任务号用逗号拼起来
     const count = input.type === 't2i' || input.type === 'i2i' ? Math.min(Math.max(input.params.count || 1, 1), 4) : 1;
     const ids: string[] = [];
-    for (let index = 0; index < count; index++) ids.push(await submitOne(input, index));
+    for (let index = 0; index < count; index++) ids.push(await this.submitOne(input, index));
     const kind = input.type.endsWith('v') ? 'video' : 'image';
     return { jobId: `${kind}:${ids.join(',')}` };
   }
 
-  tokenStatus(): TokenStatus {
-    return {
-      supported: true,
-      operator: this.name,
-      base: config.genApiBase,
-      appid: config.comfyAppId || undefined,
-      configured: Boolean((config.comfyAppId && config.comfySecret) || (config.comfyEmail && config.comfyPassword) || config.comfyToken),
-      hasToken: Boolean(token),
-      tokenPreview: token ? `${token.slice(0, 6)}…${token.slice(-4)}` : null,
-      ...status,
-    };
-  }
-
-  async verifyToken(): Promise<TokenStatus> {
-    const started = Date.now();
-    try {
-      await verifyNow();
-    } catch (error) {
-      // verifyNow 自己记录了“凭证无效”；连不上、登录失败等其他错误在这里记录
-      if (!status.lastVerifyAt || status.lastVerifyAt < started) recordVerify(false, (error as Error).message);
-    }
-    return this.tokenStatus();
-  }
-
-  async renewToken(): Promise<TokenStatus> {
-    forgetToken();
-    try {
-      await login();
-      await verifyNow();
-    } catch (error) {
-      recordVerify(false, (error as Error).message);
-    }
-    return this.tokenStatus();
-  }
-
   pollIntervalMs(jobId: string): number {
-    return parseJobId(jobId).kind === 'video' ? config.comfyVideoPollMs : config.comfyImagePollMs;
+    const settings = this.ctx.settings;
+    return parseJobId(jobId).kind === 'video' ? settings.videoPollMs : settings.imagePollMs;
   }
 
   async poll(jobId: string): Promise<JobStatus> {
     const { kind, ids } = parseJobId(jobId);
-    const jobs = await Promise.all(ids.map((id) => pollOne(id, kind)));
+    const jobs = await Promise.all(ids.map((id) => this.pollOne(id, kind)));
     const failed = jobs.find((job) => job.state === 'failed');
     if (failed) return { state: 'failed', error: failed.error };
     if (jobs.every((job) => job.state === 'succeeded')) {
@@ -655,7 +648,7 @@ export class ComfyWebProvider implements Provider {
       if (!files.length) return { state: 'failed', error: '任务完成但没有找到产物文件（详见服务日志）' };
       const outputs: ProviderOutput[] = [];
       try {
-        for (const file of files) outputs.push(await download(file));
+        for (const file of files) outputs.push(await this.download(file));
       } catch (error) {
         await Promise.all(outputs.map((output) => output.filePath && fs.rm(output.filePath, { force: true })));
         throw error;
@@ -673,7 +666,63 @@ export class ComfyWebProvider implements Provider {
     // 对方没有取消接口：织影这边标记取消即可，生成结果会被忽略
   }
 
-  async chat(messages: ChatMessage[], options?: ChatOptions) {
-    return openAiChat(messages, options);
+  // ---------------- 后台：令牌管理 ----------------
+
+  tokenStatus(): TokenStatus {
+    return {
+      supported: true,
+      operator: this.name,
+      base: this.ctx.baseUrl,
+      appid: this.ctx.appid || undefined,
+      configured: Boolean(this.ctx.appid && this.ctx.secret('secret')) || Boolean(this.token),
+      hasToken: Boolean(this.token),
+      tokenPreview: this.token ? `${this.token.slice(0, 6)}…${this.token.slice(-4)}` : null,
+      ...this.status,
+    };
+  }
+
+  async verifyToken(): Promise<TokenStatus> {
+    const started = Date.now();
+    try {
+      await this.verifyNow();
+    } catch (error) {
+      // verifyNow 自己记录了“凭证无效”；连不上、登录失败等其他错误在这里记录
+      if (!this.status.lastVerifyAt || this.status.lastVerifyAt < started) this.recordVerify(false, (error as Error).message);
+    }
+    return this.tokenStatus();
+  }
+
+  async renewToken(): Promise<TokenStatus> {
+    this.forgetToken();
+    try {
+      await this.login();
+      await this.verifyNow();
+    } catch (error) {
+      this.recordVerify(false, (error as Error).message);
+    }
+    return this.tokenStatus();
+  }
+
+  clearToken(): TokenStatus {
+    this.forgetToken();
+    return this.tokenStatus();
+  }
+
+  /** 手动填入令牌（调试用），到期时间未知时标为 manual */
+  setManualToken(token: string): TokenStatus {
+    const exp = jwtExpiry(token);
+    this.adopt({ token, issuedAt: Date.now(), expiresAt: exp, basis: exp ? 'jwt' : 'manual' });
+    return this.tokenStatus();
+  }
+
+  revealToken(): string | null {
+    return this.token || null;
+  }
+
+  /** 对方最近 100 条任务（后台“远端任务”页签） */
+  async listRemote(): Promise<unknown[]> {
+    const data = await this.callJson('GET', '/api/tasks');
+    const list = Array.isArray(data) ? data : Array.isArray(data.value) ? data.value : Array.isArray(data.tasks) ? data.tasks : Array.isArray(data.data) ? data.data : [];
+    return list as unknown[];
   }
 }

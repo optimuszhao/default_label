@@ -1,6 +1,5 @@
 // 数据库行 <-> 共享类型 的转换，以及常用查询。
 import type { Asset, GenParams, Task, TaskInputs, User, UserSettings } from '../shared/types.ts';
-import { config } from './config.ts';
 import { db, parseJson, type Row } from './db.ts';
 
 export function toUser(row: Row): User {
@@ -8,7 +7,7 @@ export function toUser(row: Row): User {
     id: String(row.id),
     email: String(row.email),
     name: String(row.name),
-    isAdmin: config.adminEmails.includes(String(row.email).toLowerCase()),
+    isAdmin: row.role === 'admin',
     createdAt: Number(row.created_at),
   };
 }
