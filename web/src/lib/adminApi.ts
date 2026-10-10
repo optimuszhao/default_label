@@ -1,5 +1,6 @@
 // 超级管理后台接口
 import type { OperatorSummary, OperatorTestStep, Task, TokenStatus, User } from '../../../shared/types.ts';
+import type { Preset, PromptTemplate } from '../../../shared/presets.ts';
 import { request } from './api.ts';
 
 export interface OperatorInput {
@@ -66,6 +67,8 @@ export interface BackupEntry {
   createdAt: number;
 }
 
+export type TemplateInput = Omit<PromptTemplate, 'id' | 'hot' | 'favorite' | 'uses' | 'cover'> & { cover?: string | null };
+
 export const adminApi = {
   overview: () => request<Overview>('GET', '/api/admin/overview'),
 
@@ -92,6 +95,13 @@ export const adminApi = {
 
   audit: () => request<AuditEntry[]>('GET', '/api/admin/audit'),
   backups: () => request<BackupEntry[]>('GET', '/api/admin/backups'),
+
+  presets: () => request<Preset[]>('GET', '/api/admin/presets'),
+  updatePreset: (slug: string, patch: Partial<Pick<Preset, 'name' | 'prompt' | 'enabled' | 'sort'>> & { negative?: string | null; fallbackPrompt?: string | null; hint?: string | null }) =>
+    request<Preset>('PATCH', `/api/admin/presets/${slug}`, patch),
+  templates: () => request<PromptTemplate[]>('GET', '/api/admin/templates'),
+  createTemplate: (input: TemplateInput & { id: string }) => request<PromptTemplate>('POST', '/api/admin/templates', input),
+  updateTemplate: (id: string, patch: Partial<TemplateInput>) => request<PromptTemplate>('PATCH', `/api/admin/templates/${id}`, patch),
   backupNow: () => request<BackupEntry>('POST', '/api/admin/backups'),
 };
 

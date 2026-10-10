@@ -18,6 +18,7 @@ import type {
 } from '../../../shared/types.ts';
 
 import type { Capabilities } from '../../../shared/operator.ts';
+import type { Preset, PromptTemplate, Recipe, UserPrompt } from '../../../shared/presets.ts';
 
 export class ApiError extends Error {
   status: number;
@@ -64,7 +65,9 @@ export interface Session {
 export interface NewTask {
   type: TaskType;
   title?: string;
+  /** 带配方时由服务端编译，可以留空 */
   prompt: string;
+  recipe?: Recipe;
   negativePrompt?: string;
   params: GenParams;
   inputs?: TaskInputs;
@@ -84,6 +87,25 @@ export const api = {
   health: () => request<ProviderHealth>('GET', '/api/health'),
   refreshHealth: () => request<ProviderHealth>('POST', '/api/health/refresh'),
   capabilities: () => request<Capabilities>('GET', '/api/capabilities'),
+
+  // 创作台 2.0：预设、模板、收藏、我的提示词、流水
+  presets: () => request<Preset[]>('GET', '/api/presets'),
+  templates: () => request<PromptTemplate[]>('GET', '/api/templates'),
+  setFavorite: (kind: 'template' | 'preset', ref: string, on: boolean) => request('PUT', '/api/favorites', { kind, ref, on }),
+  prompts: () => request<UserPrompt[]>('GET', '/api/prompts'),
+  savePrompt: (name: string, body: string, mode: 'image' | 'video') => request<UserPrompt>('POST', '/api/prompts', { name, body, mode }),
+  deletePrompt: (id: string) => request('DELETE', `/api/prompts/${id}`),
+  recentRecipes: () => request<{ recipe: Recipe; prompt: string; createdAt: number }[]>('GET', '/api/recipes/recent'),
+  feed: (query: { before?: string | null; limit?: number; kind?: string; favorite?: boolean; q?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (query.before) params.set('before', query.before);
+    if (query.limit) params.set('limit', String(query.limit));
+    if (query.kind) params.set('kind', query.kind);
+    if (query.favorite) params.set('favorite', '1');
+    if (query.q) params.set('q', query.q);
+    return request<{ tasks: Task[]; assets: Asset[]; next: string | null }>('GET', `/api/feed?${params}`);
+  },
+  asset: (id: string) => request<Asset>('GET', `/api/assets/${id}`),
 
   // 管理员：算子令牌
   tokenStatus: () => request<TokenStatus>('GET', '/api/admin/token'),

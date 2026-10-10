@@ -9,6 +9,7 @@ import { reportError, useStore } from '../../../lib/store.ts';
 import { cx } from '../../../lib/util.ts';
 import { useStory } from './context.tsx';
 import { newCharacter } from './model.ts';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 const ROLES = ['主角', '配角', '反派', '群演'];
 
@@ -77,7 +78,7 @@ function CharacterCard({ character, onPick }: { character: Character; onPick: ()
             <IconButton
               label="删除角色"
               className="hover:text-danger"
-              onClick={() => confirm(`删除角色「${character.name}」？`) && update((d) => ({ ...d, characters: d.characters.filter((c) => c.id !== character.id) }))}
+              onClick={async () => (await confirmDialog({ title: `删除角色「${character.name}」？`, confirmText: '删除', danger: true })) && update((d) => ({ ...d, characters: d.characters.filter((c) => c.id !== character.id) }))}
             >
               <Trash2 className="size-4" />
             </IconButton>

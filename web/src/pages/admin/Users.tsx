@@ -5,6 +5,7 @@ import { adminApi, formatTime, type AdminUser } from '../../lib/adminApi.ts';
 import { reportError, useStore } from '../../lib/store.ts';
 import { useDebouncedCallback } from '../../lib/util.ts';
 import { PageHeader } from './AdminLayout.tsx';
+import { confirmDialog } from '../../components/ConfirmDialog.tsx';
 
 export default function AdminUsers() {
   const me = useStore((s) => s.user);
@@ -19,7 +20,7 @@ export default function AdminUsers() {
   }, [load]);
 
   async function update(user: AdminUser, patch: { role?: 'user' | 'admin'; disabled?: boolean }, message: string) {
-    if (patch.disabled && !window.confirm(`停用 ${user.email}？对方会立即下线，无法再登录。`)) return;
+    if (patch.disabled && !(await confirmDialog({ title: `停用 ${user.email}？`, message: '对方会立即下线，无法再登录。', confirmText: '停用', danger: true }))) return;
     try {
       await adminApi.updateUser(user.id, patch);
       toast(message, 'success');

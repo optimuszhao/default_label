@@ -7,6 +7,7 @@ import { reportError } from '../../../lib/store.ts';
 import { useStory } from './context.tsx';
 import { findScene, moveItem, newChapter, newDialogue, newScene, updateChapter, updateScene } from './model.ts';
 import { SceneNavigator } from './SceneNavigator.tsx';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 interface AiChapter {
   title: string;
@@ -80,7 +81,7 @@ function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
     update(updateScene(scene.id, (s) => ({ ...s, dialogue: s.dialogue.map((d) => (d.id === id ? { ...d, ...patch } : d)) })));
 
   async function writeDialogue() {
-    if (scene.dialogue.length && !confirm('用 AI 生成的台词替换本场现有台词？')) return;
+    if (scene.dialogue.length && !(await confirmDialog({ title: '用 AI 生成的台词替换本场现有台词？', message: '当前内容会先存进历史版本。' }))) return;
     setWriting(true);
     try {
       const result = await api.assist<{ dialogue: { character: string; text: string; emotion: string }[] }>('dialogue', {

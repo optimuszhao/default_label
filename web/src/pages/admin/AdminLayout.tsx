@@ -1,5 +1,7 @@
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { ArrowLeft, Archive, Cpu, Gauge, ListChecks, ScrollText, Users } from 'lucide-react';
+import { ArrowLeft, Archive, Cpu, Gauge, LayoutTemplate, ListChecks, ScrollText, Users } from 'lucide-react';
+import { useEffect } from 'react';
+import { useCatalog } from '../studio/create/catalog.ts';
 import { Logo } from '../../components/ui.tsx';
 import { cx } from '../../lib/util.ts';
 
@@ -8,12 +10,17 @@ const NAV = [
   { to: '/admin/operators', label: '算子', icon: Cpu },
   { to: '/admin/tasks', label: '任务', icon: ListChecks },
   { to: '/admin/users', label: '用户', icon: Users },
+  { to: '/admin/content', label: '内容', icon: LayoutTemplate },
   { to: '/admin/backups', label: '备份', icon: Archive },
   { to: '/admin/audit', label: '审计', icon: ScrollText },
 ];
 
 /** 管理后台外壳：桌面左侧栏，手机顶部横向标签 */
 export default function AdminLayout() {
+  const loadCatalog = useCatalog((s) => s.load);
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
   return (
     <div className="min-h-dvh md:pl-52">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-52 flex-col border-r border-line bg-ink/80 backdrop-blur-xl md:flex">

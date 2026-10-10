@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { ConfirmHost } from './components/ConfirmDialog.tsx';
 import { Spinner, Toasts } from './components/ui.tsx';
 import { useServerEvents } from './lib/events.ts';
 import { useStore } from './lib/store.ts';
@@ -9,6 +10,7 @@ const Landing = lazy(() => import('./pages/Landing.tsx'));
 const Auth = lazy(() => import('./pages/Auth.tsx'));
 const StudioLayout = lazy(() => import('./pages/studio/Layout.tsx'));
 const Create = lazy(() => import('./pages/studio/Create.tsx'));
+const Inspire = lazy(() => import('./pages/studio/Inspire.tsx'));
 const Stories = lazy(() => import('./pages/studio/Stories.tsx'));
 const StoryEditor = lazy(() => import('./pages/studio/StoryEditor.tsx'));
 const Queue = lazy(() => import('./pages/studio/Queue.tsx'));
@@ -23,6 +25,7 @@ const AdminTasks = lazy(() => import('./pages/admin/Tasks.tsx'));
 const AdminUsers = lazy(() => import('./pages/admin/Users.tsx'));
 const AdminBackups = lazy(() => import('./pages/admin/Backups.tsx'));
 const AdminAudit = lazy(() => import('./pages/admin/Audit.tsx'));
+const AdminContent = lazy(() => import('./pages/admin/Content.tsx'));
 
 function FullscreenLoader() {
   return (
@@ -78,6 +81,7 @@ export default function App() {
           >
             <Route index element={<Navigate to="create" replace />} />
             <Route path="create" element={<Create />} />
+            <Route path="inspire" element={<Inspire />} />
             <Route path="stories" element={<Stories />} />
             <Route path="stories/:id" element={<StoryEditor />} />
             <Route path="queue" element={<Queue />} />
@@ -97,6 +101,7 @@ export default function App() {
             <Route path="operators/:id" element={<AdminOperatorDetail />} />
             <Route path="tasks" element={<AdminTasks />} />
             <Route path="users" element={<AdminUsers />} />
+            <Route path="content" element={<AdminContent />} />
             <Route path="backups" element={<AdminBackups />} />
             <Route path="audit" element={<AdminAudit />} />
           </Route>
@@ -104,6 +109,7 @@ export default function App() {
         </Routes>
       </Suspense>
       <Toasts />
+      <ConfirmHost />
     </>
   );
 }

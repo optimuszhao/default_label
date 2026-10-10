@@ -3,6 +3,7 @@ import { IconButton } from '../../../components/ui.tsx';
 import { cx } from '../../../lib/util.ts';
 import { useStory } from './context.tsx';
 import { moveItem, newChapter, newScene, updateChapter } from './model.ts';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 /** 章节 / 场次导航：桌面端为树形侧栏，移动端为原生下拉框（滚动与选择更顺滑） */
 export function SceneNavigator({ editable }: { editable?: boolean }) {
@@ -22,13 +23,13 @@ export function SceneNavigator({ editable }: { editable?: boolean }) {
     setSceneId(scene.id);
   }
 
-  function removeChapter(chapterId: string, title: string) {
-    if (!confirm(`删除「${title}」及其全部场次和分镜？`)) return;
+  async function removeChapter(chapterId: string, title: string) {
+    if (!(await confirmDialog({ title: `删除「${title}」？`, message: '会一并删除它的全部场次和分镜。', confirmText: '删除', danger: true }))) return;
     update((d) => ({ ...d, chapters: d.chapters.filter((c) => c.id !== chapterId) }));
   }
 
-  function removeScene(chapterId: string, id: string, title: string) {
-    if (!confirm(`删除场次「${title}」及其分镜？`)) return;
+  async function removeScene(chapterId: string, id: string, title: string) {
+    if (!(await confirmDialog({ title: `删除场次「${title}」？`, message: '会一并删除它的分镜。', confirmText: '删除', danger: true }))) return;
     update(updateChapter(chapterId, (c) => ({ ...c, scenes: c.scenes.filter((s) => s.id !== id) })));
     if (sceneId === id) setSceneId(null);
   }

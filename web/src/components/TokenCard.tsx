@@ -7,6 +7,7 @@ import { adminApi, formatTime } from '../lib/adminApi.ts';
 import { reportError, useStore } from '../lib/store.ts';
 import { cx, timeAgo, useNow } from '../lib/util.ts';
 import { Button, Modal, Spinner } from './ui.tsx';
+import { confirmDialog } from './ConfirmDialog.tsx';
 
 const BASIS: Record<string, string> = {
   jwt: '从令牌内容（JWT exp）读出',
@@ -45,7 +46,7 @@ export function TokenCard({ operatorId }: { operatorId: string }) {
   }, [revealed]);
 
   async function act(action: 'verify' | 'renew' | 'clear') {
-    if (action === 'clear' && !window.confirm('清除织影本地保存的令牌？下次调用时会自动重新获取。')) return;
+    if (action === 'clear' && !(await confirmDialog({ title: '清除本地令牌？', message: '下次调用时会自动重新获取。' }))) return;
     setBusy(action);
     try {
       const next = await adminApi.tokenAction(operatorId, action);

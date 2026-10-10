@@ -8,6 +8,13 @@ import { getAssetRow, toAsset } from '../repo.ts';
 import { bad, parse, uid } from './common.ts';
 
 export async function assetRoutes(api: FastifyInstance): Promise<void> {
+  api.get('/api/assets/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = getAssetRow(id);
+    if (!row || row.user_id !== uid(request)) return bad(reply, '素材不存在', 404);
+    return toAsset(row);
+  });
+
   api.get('/api/assets', async (request) => {
     const query = request.query as { kind?: string; storyId?: string; favorite?: string; source?: string; before?: string; limit?: string };
     const where = ['user_id = ?'];

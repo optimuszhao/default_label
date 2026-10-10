@@ -4,6 +4,7 @@ import type { Story, StorySnapshot } from '../../../../../shared/types.ts';
 import { Button, Empty, Modal, Spinner } from '../../../components/ui.tsx';
 import { api } from '../../../lib/api.ts';
 import { reportError } from '../../../lib/store.ts';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 const REASON: Record<string, string> = {
   daily: '每日自动保存',
@@ -49,7 +50,7 @@ export function HistoryDialog({
   }, [open, storyId]);
 
   async function restore(item: StorySnapshot) {
-    if (!window.confirm(`恢复到「${formatTime(item.createdAt)}」的版本？当前内容会先另存一份，可以再恢复回来。`)) return;
+    if (!(await confirmDialog({ title: `恢复到「${formatTime(item.createdAt)}」的版本？`, message: '当前内容会先另存一份，可以再恢复回来。', confirmText: '恢复' }))) return;
     setBusy(item.id);
     try {
       if (!(await beforeRestore())) return;

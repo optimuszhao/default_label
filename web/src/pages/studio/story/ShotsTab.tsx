@@ -12,6 +12,7 @@ import { cx } from '../../../lib/util.ts';
 import { useShotGenerator, useStory } from './context.tsx';
 import { EMPTY_MEDIA, findScene, moveItem, newShot, updateScene, updateShot } from './model.ts';
 import { SceneNavigator } from './SceneNavigator.tsx';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 function MediaSlot({
   label,
@@ -217,7 +218,7 @@ export function ShotsTab() {
   async function design() {
     if (!found) return;
     const { scene } = found;
-    if (scene.shots.length && !confirm('用 AI 设计的分镜替换本场现有镜头？')) return;
+    if (scene.shots.length && !(await confirmDialog({ title: '用 AI 设计的分镜替换本场现有镜头？', message: '当前内容会先存进历史版本。' }))) return;
     setDesigning(true);
     try {
       const result = await api.assist<{

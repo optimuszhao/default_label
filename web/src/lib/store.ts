@@ -5,6 +5,10 @@ import { api, ApiError } from './api.ts';
 
 export interface ComposerDraft {
   mode: 'image' | 'video';
+  /** 完整配方（改参数重跑、从灵感页套用模板） */
+  recipe?: import('../../../shared/presets.ts').Recipe;
+  /** 套用后直接生成 */
+  autoSubmit?: boolean;
   prompt?: string;
   referenceAssetIds?: string[];
   firstFrameAssetId?: string | null;

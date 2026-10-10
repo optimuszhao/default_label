@@ -85,6 +85,8 @@ export async function buildApp() {
       setHeaders(res, filePath) {
         if (filePath.includes(`${path.sep}assets${path.sep}`)) {
           res.header('cache-control', 'public, max-age=31536000, immutable');
+        } else if (filePath.endsWith('sw.js') || filePath.endsWith('.webmanifest')) {
+          res.header('cache-control', 'no-cache');
         }
       },
     });

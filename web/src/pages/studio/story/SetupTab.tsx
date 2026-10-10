@@ -5,6 +5,7 @@ import { api } from '../../../lib/api.ts';
 import { ASPECT_RATIOS, cssRatio } from '../../../lib/presets.ts';
 import { reportError } from '../../../lib/store.ts';
 import { DEFAULT_KEYFRAME_NEGATIVE, useStory } from './context.tsx';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 const GENRES = ['科幻', '奇幻', '悬疑', '爱情', '武侠', '喜剧', '恐怖', '历史', '治愈', '动作'];
 const STYLES = ['电影质感，写实光影，35mm 胶片颗粒', '日系动画，清新明亮，赛璐璐上色', '国风水墨，留白意境', '赛博朋克，霓虹高对比', '皮克斯 3D 动画风格', '黑白默片质感'];
@@ -14,7 +15,7 @@ export function SetupTab({ title, onTitle }: { title: string; onTitle: (title: s
   const [loading, setLoading] = useState(false);
 
   async function generateOutline() {
-    if (data.outline.trim() && !confirm('将用 AI 生成的大纲替换当前内容，确定吗？')) return;
+    if (data.outline.trim() && !(await confirmDialog({ title: '用 AI 生成的大纲替换当前内容？', message: '当前内容会先存进历史版本，可以恢复。' }))) return;
     setLoading(true);
     try {
       const result = await api.assist<{ title?: string; outline: string }>('outline', {

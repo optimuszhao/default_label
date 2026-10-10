@@ -6,6 +6,7 @@ import { Button, Empty, IconButton, Modal } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError } from '../../lib/store.ts';
 import { timeAgo } from '../../lib/util.ts';
+import { confirmDialog } from '../../components/ConfirmDialog.tsx';
 
 export default function Stories() {
   const [stories, setStories] = useState<StorySummary[] | null>(null);
@@ -36,7 +37,7 @@ export default function Stories() {
   }
 
   async function remove(story: StorySummary) {
-    if (!confirm(`确定删除「${story.title}」吗？已生成的素材会保留在资产库。`)) return;
+    if (!(await confirmDialog({ title: `删除「${story.title}」？`, message: '已生成的素材会保留在资产库。', confirmText: '删除', danger: true }))) return;
     try {
       await api.deleteStory(story.id);
       setStories((prev) => prev?.filter((item) => item.id !== story.id) ?? null);

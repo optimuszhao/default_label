@@ -9,6 +9,7 @@ import { reportError, useStore } from '../../lib/store.ts';
 import { timeAgo } from '../../lib/util.ts';
 import { Dot, PageHeader } from './AdminLayout.tsx';
 import { OperatorForm } from './OperatorForm.tsx';
+import { confirmDialog } from '../../components/ConfirmDialog.tsx';
 
 export const STATUS: Record<OperatorSummary['status'], { label: string; tone: 'ok' | 'warn' | 'danger' | 'muted' }> = {
   online: { label: '在线', tone: 'ok' },
@@ -160,7 +161,7 @@ export function OperatorDetail() {
   }
 
   async function remove() {
-    if (!op || !window.confirm(`删除算子「${op.name}」？它的密钥和令牌会一并删除。`)) return;
+    if (!op || !(await confirmDialog({ title: `删除算子「${op.name}」？`, message: '它的密钥和令牌会一并删除。', confirmText: '删除', danger: true }))) return;
     try {
       await adminApi.deleteOperator(id);
       toast('已删除', 'success');

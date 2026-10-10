@@ -102,15 +102,18 @@ export function Segmented<T extends string>({
   onChange,
   className,
   size = 'md',
+  label,
 }: {
   value: T;
   options: { value: T; label: ReactNode }[];
   onChange: (value: T) => void;
   className?: string;
   size?: 'sm' | 'md';
+  /** 整组的无障碍名称 */
+  label?: string;
 }) {
   return (
-    <div className={cx('inline-flex rounded-lg bg-white/[0.04] p-0.5 border border-line', className)} role="tablist">
+    <div className={cx('inline-flex rounded-lg bg-white/[0.04] p-0.5 border border-line', className)} role="tablist" aria-label={label}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -132,6 +135,8 @@ export function Segmented<T extends string>({
 
 // ---------------- Modal / Sheet ----------------
 
+const modalStack: object[] = [];
+
 export function Modal({
   open,
   onClose,
@@ -147,17 +152,23 @@ export function Modal({
   wide?: boolean;
   bare?: boolean;
 }) {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    // 叠在一起的弹窗：Esc 只关最上面那个（只依赖 open，重渲染不会改变叠放顺序）
+    const token = {};
+    modalStack.push(token);
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && modalStack.at(-1) === token && closeRef.current();
     window.addEventListener('keydown', onKey);
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       window.removeEventListener('keydown', onKey);
+      modalStack.splice(modalStack.indexOf(token), 1);
       document.body.style.overflow = overflow;
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal>

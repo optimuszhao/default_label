@@ -5,6 +5,7 @@ import { useStore } from '../../../lib/store.ts';
 import { useStory } from './context.tsx';
 import { moveItem, newChapter, newScene, updateChapter, updateScene } from './model.ts';
 import { SplitDialog } from './ScriptTab.tsx';
+import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 /** 章节场次：只关心故事骨架，每场的剧情和台词在下一步「剧本台词」里写 */
 export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) => void }) {
@@ -60,7 +61,7 @@ export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) =
             <IconButton
               label="删除章节"
               className="size-7 hover:text-danger"
-              onClick={() => confirm(`删除「${chapter.title}」及其全部场次和分镜？`) && update((d) => ({ ...d, chapters: d.chapters.filter((c) => c.id !== chapter.id) }))}
+              onClick={async () => (await confirmDialog({ title: `删除「${chapter.title}」？`, message: '会一并删除它的全部场次和分镜。', confirmText: '删除', danger: true })) && update((d) => ({ ...d, chapters: d.chapters.filter((c) => c.id !== chapter.id) }))}
             >
               <Trash2 className="size-3.5" />
             </IconButton>
@@ -114,8 +115,8 @@ export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) =
                   <IconButton
                     label="删除场次"
                     className="size-8 hover:text-danger"
-                    onClick={() =>
-                      confirm(`删除场次「${scene.title}」及其分镜？`) &&
+                    onClick={async () =>
+                      (await confirmDialog({ title: `删除场次「${scene.title}」？`, message: '会一并删除它的分镜。', confirmText: '删除', danger: true })) &&
                       update(updateChapter(chapter.id, (c) => ({ ...c, scenes: c.scenes.filter((s) => s.id !== scene.id) })))
                     }
                   >

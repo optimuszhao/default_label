@@ -1,13 +1,15 @@
 import { useEffect, useMemo } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { BookOpenText, Images, ListOrdered, Settings, ShieldCheck, Sparkles } from 'lucide-react';
+import { BookOpenText, Images, Lightbulb, ListOrdered, Settings, ShieldCheck, Sparkles } from 'lucide-react';
 import { HealthPills, Logo } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { useStore } from '../../lib/store.ts';
+import { useCatalog } from './create/catalog.ts';
 import { cx } from '../../lib/util.ts';
 
 const NAV = [
   { to: '/studio/create', label: '创作', icon: Sparkles },
+  { to: '/studio/inspire', label: '灵感', icon: Lightbulb },
   { to: '/studio/stories', label: '故事', icon: BookOpenText },
   { to: '/studio/queue', label: '队列', icon: ListOrdered },
   { to: '/studio/assets', label: '资产', icon: Images },
@@ -34,6 +36,7 @@ export default function StudioLayout() {
     void api.tasks({ limit: 300 }).then(upsertTasks).catch(() => undefined);
     void api.health().then(setHealth).catch(() => undefined);
     void api.capabilities().then(setCapabilities).catch(() => undefined);
+    void useCatalog.getState().load();
   }, [upsertTasks, setHealth, setCapabilities]);
 
   return (
@@ -103,7 +106,7 @@ export default function StudioLayout() {
 
       {/* 移动端底部导航 */}
       <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-30 border-x-0 border-b-0 md:hidden">
-        <div className="grid h-16 grid-cols-5">
+        <div className="grid h-16 grid-cols-6">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
