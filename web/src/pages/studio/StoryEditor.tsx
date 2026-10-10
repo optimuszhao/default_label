@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, CloudOff, LayoutGrid, Loader2 } from 'lucide-react';
-import type { StoryData } from '../../../../shared/types.ts';
-import { Button, Spinner } from '../../components/ui.tsx';
-import { api } from '../../lib/api.ts';
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, CloudOff, History, LayoutGrid, Loader2 } from 'lucide-react';
+import type { Story, StoryData } from '../../../../shared/types.ts';
+import { Button, IconButton, Spinner } from '../../components/ui.tsx';
+import { api, ApiError } from '../../lib/api.ts';
 import { reportError, useStore } from '../../lib/store.ts';
 import { cx, useDebouncedCallback } from '../../lib/util.ts';
 import { CharactersTab } from './story/CharactersTab.tsx';
 import { StoryContext, type StoryContextValue } from './story/context.tsx';
+import { clearDraft, draftDiffers, readDraft, writeDraft, type StoryDraft } from './story/draft.ts';
+import { HistoryDialog } from './story/HistoryDialog.tsx';
 import { buildShotMedia, type Recipe } from './story/model.ts';
 import { OverviewTab } from './story/OverviewTab.tsx';
 import { PreviewTab } from './story/PreviewTab.tsx';
@@ -17,7 +19,10 @@ import { ShotsTab } from './story/ShotsTab.tsx';
 import { STEPS, stepDone, storyStats, type StepId } from './story/steps.ts';
 import { StructureTab } from './story/StructureTab.tsx';
 
-type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
+type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
+
+/** keepalive 请求体超过 64 KB 会被浏览器拒绝，留点余量；超出部分靠本地草稿兜底 */
+const KEEPALIVE_LIMIT = 60_000;
 
 export default function StoryEditor() {
   const { id = '' } = useParams();
@@ -30,19 +35,88 @@ export default function StoryEditor() {
   const tasks = useStore((s) => s.tasks);
   const upsertAssets = useStore((s) => s.upsertAssets);
   const upsertTasks = useStore((s) => s.upsertTasks);
+  const toast = useStore((s) => s.toast);
   const latest = useRef<{ title: string; data: StoryData | null }>({ title: '', data: null });
+  /** 当前编辑所基于的服务器版本号 */
+  const revRef = useRef(0);
+  /** 每次修改 +1，用来判断保存期间有没有新的修改 */
+  const editSeq = useRef(0);
+  const conflictRef = useRef(false);
+  /** 打开时发现的、基于旧版本的本地草稿，等用户决定 */
+  const [staleDraft, setStaleDraft] = useState<StoryDraft | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const applyStory = useCallback((story: Pick<Story, 'title' | 'data' | 'rev'>) => {
+    setTitle(story.title);
+    setData(story.data);
+    latest.current = { title: story.title, data: story.data };
+    revRef.current = story.rev;
+  }, []);
+
+  const saveDraft = useCallback(() => {
+    const { title: t, data: d } = latest.current;
+    if (d) writeDraft(id, { baseRev: revRef.current, title: t, data: d, savedAt: Date.now() });
+  }, [id]);
+
+  const persist = useCallback(async (): Promise<boolean> => {
+    const { title: t, data: d } = latest.current;
+    if (!d || conflictRef.current) return false;
+    const seq = editSeq.current;
+    saveDraft();
+    setSave('saving');
+    try {
+      const result = await api.saveStory(id, t.trim() || '未命名故事', d, revRef.current);
+      revRef.current = result.rev;
+      if (editSeq.current === seq) {
+        clearDraft(id);
+        setSave('saved');
+      } else {
+        // 保存期间又有修改：草稿里留着最新内容，等下一次保存
+        saveDraft();
+        setSave('dirty');
+      }
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        conflictRef.current = true;
+        setSave('conflict');
+      } else {
+        setSave('error');
+        reportError(error);
+      }
+      return false;
+    }
+  }, [id, saveDraft]);
+
+  const scheduleSave = useDebouncedCallback(() => void persist(), 800);
 
   useEffect(() => {
     let alive = true;
     setData(null);
+    setStaleDraft(null);
+    conflictRef.current = false;
+    editSeq.current = 0;
+    setSave('saved');
     void (async () => {
       try {
         const story = await api.story(id);
         if (!alive) return;
-        setTitle(story.title);
-        setData(story.data);
-        latest.current = { title: story.title, data: story.data };
+        applyStory(story);
         setSceneId(story.data.chapters[0]?.scenes[0]?.id ?? null);
+        // 上次没保存上去的修改：基于同一版本就直接重放，否则请用户决定
+        const draft = readDraft(id);
+        if (draft && !draftDiffers(draft, story.title, story.data)) clearDraft(id);
+        else if (draft && draft.baseRev === story.rev) {
+          setTitle(draft.title);
+          setData(draft.data);
+          latest.current = { title: draft.title, data: draft.data };
+          editSeq.current++;
+          setSave('dirty');
+          scheduleSave();
+          toast('已恢复上次未保存的修改', 'info');
+        } else if (draft) {
+          setStaleDraft(draft);
+        }
         const [storyAssets, recent, storyTasks] = await Promise.all([
           api.assets({ storyId: id, limit: 500 }),
           api.assets({ limit: 300 }),
@@ -57,22 +131,9 @@ export default function StoryEditor() {
     return () => {
       alive = false;
     };
-  }, [id, upsertAssets, upsertTasks]);
-
-  const persist = useCallback(async () => {
-    const { title: t, data: d } = latest.current;
-    if (!d) return;
-    setSave('saving');
-    try {
-      await api.saveStory(id, t.trim() || '未命名故事', d);
-      setSave((state) => (state === 'saving' ? 'saved' : state));
-    } catch (error) {
-      setSave('error');
-      reportError(error);
-    }
-  }, [id]);
-
-  const scheduleSave = useDebouncedCallback(() => void persist(), 800);
+    // scheduleSave 每次渲染都是新函数，这里只在切换故事时运行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, upsertAssets, upsertTasks, applyStory, toast]);
 
   const update = useCallback(
     (recipe: Recipe) => {
@@ -82,7 +143,8 @@ export default function StoryEditor() {
         latest.current.data = next;
         return next;
       });
-      setSave('dirty');
+      editSeq.current++;
+      setSave((state) => (state === 'conflict' ? state : 'dirty'));
       scheduleSave();
     },
     [scheduleSave],
@@ -91,30 +153,70 @@ export default function StoryEditor() {
   const changeTitle = (value: string) => {
     setTitle(value);
     latest.current.title = value;
-    setSave('dirty');
+    editSeq.current++;
+    setSave((state) => (state === 'conflict' ? state : 'dirty'));
     scheduleSave();
   };
 
-  // 离开页面前若有未保存的修改，用 keepalive 请求兜底保存
+  /** 冲突时：放弃本地修改，载入服务器上的最新版本 */
+  const loadLatest = async () => {
+    try {
+      const story = await api.story(id);
+      applyStory(story);
+      clearDraft(id);
+      conflictRef.current = false;
+      setStaleDraft(null);
+      setSave('saved');
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
+  /** 冲突时：用本地版本覆盖服务器（服务器上的旧内容会先存进历史版本） */
+  const keepMine = async (draft?: StoryDraft) => {
+    try {
+      const story = await api.story(id);
+      revRef.current = story.rev;
+      if (draft) {
+        setTitle(draft.title);
+        setData(draft.data);
+        latest.current = { title: draft.title, data: draft.data };
+      }
+      conflictRef.current = false;
+      setStaleDraft(null);
+      editSeq.current++;
+      await persist();
+    } catch (error) {
+      reportError(error);
+    }
+  };
+
+  // 离开页面前：未保存的修改先写进本地草稿，再用 keepalive 请求尽量保存上去
   const saveRef = useRef(save);
   saveRef.current = save;
   useEffect(() => {
     const flush = () => {
       const { title: t, data: d } = latest.current;
       if (!d || saveRef.current === 'saved') return;
+      saveDraft();
+      if (conflictRef.current) return;
+      const body = JSON.stringify({ title: t.trim() || '未命名故事', data: d, baseRev: revRef.current });
+      if (body.length > KEEPALIVE_LIMIT) return;
       void fetch(`/api/stories/${id}`, {
         method: 'PUT',
         keepalive: true,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: t.trim() || '未命名故事', data: d }),
-      });
+        body,
+      }).then((response) => {
+        if (response.ok) clearDraft(id);
+      }, () => undefined);
     };
     window.addEventListener('pagehide', flush);
     return () => {
       window.removeEventListener('pagehide', flush);
       flush();
     };
-  }, [id]);
+  }, [id, saveDraft]);
 
   const media = useMemo(() => (data ? buildShotMedia(id, assets, tasks, data) : new Map()), [id, assets, tasks, data]);
 
@@ -166,9 +268,61 @@ export default function StoryEditor() {
             {save === 'saving' && <Loader2 className="size-3.5 animate-spin" />}
             {save === 'saved' && <Check className="size-3.5 text-ok" />}
             {save === 'error' && <CloudOff className="size-3.5 text-danger" />}
-            <span className="hidden sm:inline">{{ saved: '已保存', dirty: '编辑中', saving: '保存中', error: '保存失败' }[save]}</span>
+            {save === 'conflict' && <AlertTriangle className="size-3.5 text-warn" />}
+            <span className="hidden sm:inline">
+              {{ saved: '已保存', dirty: '编辑中', saving: '保存中', error: '保存失败', conflict: '有冲突' }[save]}
+            </span>
           </span>
+          <IconButton label="历史版本" onClick={() => setHistoryOpen(true)}>
+            <History className="size-4" />
+          </IconButton>
         </div>
+
+        {save === 'conflict' && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[13px]">
+            <AlertTriangle className="size-4 shrink-0 text-warn" />
+            <span className="min-w-0 flex-1">这个故事已在其他设备或标签页更新，你在这里的修改暂未保存。</span>
+            <Button size="sm" variant="ghost" onClick={() => void loadLatest()}>
+              载入最新版本
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void keepMine()}>
+              保留我的修改
+            </Button>
+          </div>
+        )}
+        {staleDraft && save !== 'conflict' && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-white/[0.04] px-3 py-2 text-[13px]">
+            <History className="size-4 shrink-0 text-fg-2" />
+            <span className="min-w-0 flex-1">本机有一份未保存的修改，但服务器上的版本后来又更新过。</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                clearDraft(id);
+                setStaleDraft(null);
+              }}
+            >
+              丢弃本机修改
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void keepMine(staleDraft)}>
+              恢复本机修改
+            </Button>
+          </div>
+        )}
+
+        <HistoryDialog
+          storyId={id}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          beforeRestore={async () => saveRef.current === 'saved' || (await persist())}
+          onRestored={(story) => {
+            applyStory(story);
+            clearDraft(id);
+            conflictRef.current = false;
+            setSave('saved');
+            toast('已恢复到所选版本', 'success');
+          }}
+        />
 
         {/* 步骤条 */}
         <div className="sticky top-14 z-20 -mx-4 mt-3 border-b border-line bg-ink/90 px-4 backdrop-blur-xl sm:-mx-6 sm:px-6 md:top-0">

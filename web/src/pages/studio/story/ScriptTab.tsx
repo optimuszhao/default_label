@@ -15,7 +15,7 @@ interface AiChapter {
 }
 
 export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { data, update, setSceneId } = useStory();
+  const { storyId, data, update, setSceneId } = useStory();
   const [chapters, setChapters] = useState(3);
   const [scenes, setScenes] = useState(3);
   const [loading, setLoading] = useState(false);
@@ -24,6 +24,7 @@ export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => v
     setLoading(true);
     try {
       const result = await api.assist<{ chapters: AiChapter[] }>('chapters', {
+        storyId,
         outline: data.outline,
         logline: data.logline,
         characters: data.characters.map((c) => ({ name: c.name, role: c.role })),
@@ -67,7 +68,7 @@ export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
-  const { data, update, sceneId } = useStory();
+  const { storyId, data, update, sceneId } = useStory();
   const found = findScene(data, sceneId);
   const [writing, setWriting] = useState(false);
   if (!found) {
@@ -83,6 +84,7 @@ function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
     setWriting(true);
     try {
       const result = await api.assist<{ dialogue: { character: string; text: string; emotion: string }[] }>('dialogue', {
+        storyId,
         outline: data.outline.slice(0, 3000),
         chapter: chapter.title,
         sceneTitle: scene.title,

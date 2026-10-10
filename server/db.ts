@@ -101,6 +101,20 @@ addColumn('tasks', 'stage', 'TEXT');
 addColumn('tasks', 'run_seed', 'INTEGER');
 addColumn('assets', 'gen', 'TEXT');
 addColumn('assets', 'duration', 'REAL');
+/** 故事版本号：每次保存 +1，用来发现多端同时编辑 */
+addColumn('stories', 'rev', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+CREATE TABLE IF NOT EXISTS story_snapshots (
+  id TEXT PRIMARY KEY,
+  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+  rev INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  data TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_story_snapshots ON story_snapshots(story_id, created_at DESC);
+`);
 
 export function newId(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url');

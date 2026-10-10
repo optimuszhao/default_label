@@ -4,6 +4,7 @@ import type {
   ProviderHealth,
   Story,
   StoryData,
+  StorySnapshot,
   StorySummary,
   Task,
   TaskInputs,
@@ -72,7 +73,14 @@ export const api = {
     return request<Task[]>('GET', `/api/tasks?${params}`);
   },
   createTask: (task: NewTask) => request<Task>('POST', '/api/tasks', task),
-  createTasks: (tasks: NewTask[]) => request<Task[]>('POST', '/api/tasks/batch', { tasks }),
+  /** 批量创建：服务端单次最多 200 个，超过时分批提交 */
+  createTasks: async (tasks: NewTask[]) => {
+    const created: Task[] = [];
+    for (let i = 0; i < tasks.length; i += 200) {
+      created.push(...(await request<Task[]>('POST', '/api/tasks/batch', { tasks: tasks.slice(i, i + 200) })));
+    }
+    return created;
+  },
   taskAction: (id: string, action: 'run' | 'pause' | 'resume' | 'cancel' | 'retry') =>
     request<Task>('POST', `/api/tasks/${id}/${action}`),
   setPriority: (id: string, priority: number) => request<Task>('PATCH', `/api/tasks/${id}`, { priority }),
@@ -80,7 +88,7 @@ export const api = {
   queueAction: (action: 'run-all' | 'pause-all' | 'resume-all' | 'clear-finished') =>
     request<{ count: number }>('POST', `/api/queue/${action}`),
 
-  assets: (query: { kind?: string; storyId?: string; favorite?: boolean; source?: string; before?: number; limit?: number } = {}) => {
+  assets: (query: { kind?: string; storyId?: string; favorite?: boolean; source?: string; before?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === false) continue;
@@ -104,8 +112,10 @@ export const api = {
   stories: () => request<StorySummary[]>('GET', '/api/stories'),
   createStory: (title: string, logline: string) => request<Story>('POST', '/api/stories', { title, logline }),
   story: (id: string) => request<Story>('GET', `/api/stories/${id}`),
-  saveStory: (id: string, title: string, data: StoryData) =>
-    request<{ ok: true; updatedAt: number }>('PUT', `/api/stories/${id}`, { title, data }),
+  saveStory: (id: string, title: string, data: StoryData, baseRev?: number) =>
+    request<{ ok: true; rev: number; updatedAt: number }>('PUT', `/api/stories/${id}`, { title, data, baseRev }),
+  storySnapshots: (id: string) => request<StorySnapshot[]>('GET', `/api/stories/${id}/snapshots`),
+  restoreSnapshot: (id: string, snapshotId: string) => request<Story>('POST', `/api/stories/${id}/snapshots/${snapshotId}/restore`),
   deleteStory: (id: string) => request('DELETE', `/api/stories/${id}`),
 
   assist: <T>(kind: AssistKind, input: Record<string, unknown>) => request<T>('POST', `/api/assist/${kind}`, input),

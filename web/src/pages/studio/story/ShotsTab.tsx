@@ -201,7 +201,7 @@ const ShotCard = memo(function ShotCard({
 });
 
 export function ShotsTab() {
-  const { data, update, sceneId } = useStory();
+  const { storyId, data, update, sceneId } = useStory();
   const generator = useShotGenerator();
   const [designing, setDesigning] = useState(false);
   const [viewing, setViewing] = useState<Asset | null>(null);
@@ -216,6 +216,7 @@ export function ShotsTab() {
       const result = await api.assist<{
         shots: { shotSize: string; cameraMove: string; description: string; duration: number; dialogueIndexes: number[]; characterNames: string[] }[];
       }>('shots', {
+        storyId,
         visualStyle: data.visualStyle,
         sceneTitle: scene.title,
         location: scene.location,

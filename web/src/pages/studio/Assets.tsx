@@ -33,7 +33,7 @@ export default function Assets() {
   );
 
   const load = useCallback(
-    async (before?: number) => {
+    async (before?: string) => {
       setLoading(true);
       try {
         const page = await api.assets({ ...query, before, limit: PAGE });
@@ -76,7 +76,7 @@ export default function Assets() {
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && !loading) {
         const last = assets[ids[ids.length - 1]];
-        if (last) void load(last.createdAt);
+        if (last) void load(`${last.createdAt}:${last.id}`);
       }
     }, { rootMargin: '600px' });
     observer.observe(el);

@@ -204,6 +204,8 @@ export interface StoryData {
 export interface StorySummary {
   id: string;
   title: string;
+  /** 版本号，保存时带上用于冲突检测 */
+  rev: number;
   logline: string;
   coverUrl: string | null;
   shotCount: number;
@@ -213,6 +215,15 @@ export interface StorySummary {
 
 export interface Story extends StorySummary {
   data: StoryData;
+}
+
+export interface StorySnapshot {
+  id: string;
+  rev: number;
+  title: string;
+  /** daily：每日自动；ai:<kind>：AI 改写前；restore：恢复前 */
+  reason: string;
+  createdAt: number;
 }
 
 export type AssistKind =
