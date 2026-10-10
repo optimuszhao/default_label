@@ -13,7 +13,11 @@ export const config = {
   port: num('PORT', 8787),
   host: process.env.HOST ?? '0.0.0.0',
   isProd: process.env.NODE_ENV === 'production',
-  dataDir: path.resolve(root, process.env.DATA_DIR ?? 'data'),
+  /** 数据库所在目录 */
+  dataDir: path.resolve(root, process.env.DATA_DIR || 'data'),
+  /** 生成的图片、视频和上传素材存放目录，默认在 DATA_DIR/files，可单独指向 NAS 的大容量磁盘 */
+  // 用 || 而不是 ??：.env 里留空（MEDIA_DIR=）时也回落到默认值
+  mediaDir: path.resolve(root, process.env.MEDIA_DIR || path.join(process.env.DATA_DIR || 'data', 'files')),
   webDist: path.resolve(root, 'dist'),
 
   /**

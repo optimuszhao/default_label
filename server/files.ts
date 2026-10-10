@@ -19,7 +19,20 @@ const EXT: Record<string, string> = {
 export const ALLOWED_UPLOAD_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'video/mp4', 'video/webm']);
 
 export function filesDir(): string {
-  return path.join(config.dataDir, 'files');
+  return config.mediaDir;
+}
+
+/**
+ * 素材按「用户 / 日期」分目录，文件名带时间和类型，方便直接在 NAS 上按日期浏览：
+ *   <MEDIA_DIR>/<用户 id>/2026-10-10/142305-video-a_xxxx.mp4
+ */
+function relativePath(userId: string, id: string, kind: MediaKind, source: Asset['source'], ext: string): string {
+  const date = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const time = `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const label = source === 'upload' ? 'upload' : kind;
+  return `${userId}/${day}/${time}-${label}-${id}.${ext}`;
 }
 
 export function absoluteFile(file: string): string {
@@ -44,8 +57,7 @@ export interface SaveAssetInput {
 export async function saveAsset(input: SaveAssetInput): Promise<Asset> {
   const id = newId('a_');
   const ext = EXT[input.mime] ?? 'bin';
-  // 按用户分目录，避免单目录文件过多
-  const file = `${input.userId}/${id}.${ext}`;
+  const file = relativePath(input.userId, id, input.kind, input.source, ext);
   await fs.mkdir(path.dirname(absoluteFile(file)), { recursive: true });
   await fs.writeFile(absoluteFile(file), input.data);
   db.prepare(

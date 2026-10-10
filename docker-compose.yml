@@ -1,0 +1,34 @@
+# 织影 Weave · NAS 部署
+#
+# 1. 把下面两个 volumes 左侧改成你 NAS 上的真实路径，例如群晖：
+#      /volume1/docker/weave/data   数据库（小，建议放 SSD）
+#      /volume1/weave-media         生成的图片和视频（大，放机械盘）
+# 2. 确认这两个目录对 PUID/PGID 指定的用户可写（群晖默认管理员一般是 1026:100）
+# 3. docker compose up -d --build，然后浏览器打开 http://<NAS IP>:8787
+
+services:
+  weave:
+    build:
+      context: .
+      args:
+        # Docker Hub 访问慢时可换成镜像源，例如 docker.m.daocloud.io/library/node:22-bookworm-slim
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+    image: weave-studio:latest
+    container_name: weave
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${WEAVE_PORT:-8787}:8787"
+    volumes:
+      - ${WEAVE_DATA_DIR:-./data}:/data
+      - ${WEAVE_MEDIA_DIR:-./media}:/media
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # mock：内置模拟服务；http：对接 ComfyUI 侧的生成接口（协议见 docs/API_CONTRACT.md）
+      PROVIDER: ${PROVIDER:-mock}
+      GEN_API_BASE: ${GEN_API_BASE:-}
+      GEN_API_KEY: ${GEN_API_KEY:-}
+      MAX_RUNNING: ${MAX_RUNNING:-1}
+      # 通过 HTTPS 反向代理访问时设为 1
+      COOKIE_SECURE: ${COOKIE_SECURE:-}

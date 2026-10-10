@@ -24,7 +24,7 @@ app.addHook('onRequest', async (request) => {
 
 // /api/files 用 sendFile 发送，root 在路由里传入
 await app.register(fastifyStatic, {
-  root: path.join(config.dataDir, 'files'),
+  root: config.mediaDir,
   serve: false,
 });
 

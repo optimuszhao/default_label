@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { config } from './config.ts';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
-fs.mkdirSync(path.join(config.dataDir, 'files'), { recursive: true });
+fs.mkdirSync(config.mediaDir, { recursive: true });
 
 export const db = new DatabaseSync(path.join(config.dataDir, 'weave.db'));
 

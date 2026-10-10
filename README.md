@@ -23,6 +23,62 @@ npm run build
 npm start            # http://<IP>:8787
 ```
 
+## Docker 部署（NAS）
+
+镜像包含前后端，单容器、单端口运行。只需要映射两个目录：
+
+| 容器内路径 | 存什么 | 建议 |
+| --- | --- | --- |
+| `/data` | SQLite 数据库（账号、故事、任务） | 体积很小，放 SSD 更快 |
+| `/media` | 生成的图片、视频和上传素材 | 体积大，放 NAS 机械盘 |
+
+素材按「用户 / 日期」分目录，文件名带时间和类型，在 NAS 文件管理器里可以直接按日期浏览：
+
+```text
+/media/<用户 id>/2026-10-10/145308-video-a_xxxx.mp4
+```
+
+### 步骤
+
+1. 把仓库拷到 NAS 上（或 `git clone`），进入目录。
+2. **先建好两个目录并赋予权限**。目录不存在时 Docker 会以 root 创建，容器内的非 root 用户就写不进去：
+
+   ```bash
+   mkdir -p /volume1/docker/weave/data /volume1/weave-media
+   chown -R 1026:100 /volume1/docker/weave/data /volume1/weave-media   # 换成你的 PUID:PGID
+   ```
+
+3. 在同目录建一个 `.env`（docker compose 会自动读取）：
+
+   ```bash
+   WEAVE_DATA_DIR=/volume1/docker/weave/data
+   WEAVE_MEDIA_DIR=/volume1/weave-media
+   PUID=1026            # 群晖用 id 命令查看自己的 uid / gid
+   PGID=100
+   WEAVE_PORT=8787
+   PROVIDER=mock        # 生成服务接好后改为 http
+   GEN_API_BASE=        # 例如 http://192.168.1.50:9000
+   # Docker Hub 拉取慢时换国内镜像源：
+   # NODE_IMAGE=docker.m.daocloud.io/library/node:22-bookworm-slim
+   ```
+
+4. 启动：
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   浏览器打开 `http://<NAS IP>:8787`。
+
+### 常用操作
+
+- **更新版本**：`git pull && docker compose up -d --build`，数据和素材都在映射的目录里，不受影响。
+- **备份**：备份 `/data` 和 `/media` 两个目录即可。备份数据库时最好先 `docker compose stop`，或者用 NAS 快照。
+- **查看日志**：`docker compose logs -f weave`
+- **外网访问**：前面加反向代理（群晖自带的反向代理、Nginx Proxy Manager 等），走 HTTPS 时在 `.env` 里设 `COOKIE_SECURE=1`。
+- **注意**：数据库目录要放在 NAS 本机磁盘上，不要指向 SMB/NFS 网络共享（SQLite 在网络文件系统上可能损坏）。`/media` 不受此限制。
+- 模拟服务的演示视频需要 ffmpeg，构建时加 `--build-arg WITH_FFMPEG=1`；接真实生成服务后不需要。
+
 ## 功能
 
 | 模块 | 说明 |
@@ -51,7 +107,8 @@ npm start            # http://<IP>:8787
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `8787` | 后端端口 |
-| `DATA_DIR` | `./data` | 数据库和素材文件存放目录 |
+| `DATA_DIR` | `./data` | 数据库存放目录 |
+| `MEDIA_DIR` | `DATA_DIR/files` | 生成的图片、视频和上传素材存放目录 |
 | `PROVIDER` | `mock` | `mock` 用模拟服务，`http` 对接真实生成服务 |
 | `GEN_API_BASE` | 空 | 生成服务地址，例如 `http://192.168.1.50:9000` |
 | `GEN_API_KEY` | 空 | 生成服务鉴权密钥（可选） |
