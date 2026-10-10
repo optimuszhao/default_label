@@ -264,7 +264,11 @@ export default function StoryEditor() {
           <span className="hidden font-mono text-[11px] text-fg-3 md:inline">
             {stats.chapters} 章 · {stats.scenes} 场 · {stats.shots} 镜 · 关键帧 {stats.keyframes}/{stats.shots}
           </span>
-          <span className="flex shrink-0 items-center gap-1.5 pl-2 text-xs text-fg-3">
+          <span
+            role="status"
+            aria-label={{ saved: '已保存', dirty: '编辑中', saving: '保存中', error: '保存失败', conflict: '有冲突' }[save]}
+            className="flex shrink-0 items-center gap-1.5 pl-2 text-xs text-fg-3"
+          >
             {save === 'saving' && <Loader2 className="size-3.5 animate-spin" />}
             {save === 'saved' && <Check className="size-3.5 text-ok" />}
             {save === 'error' && <CloudOff className="size-3.5 text-danger" />}

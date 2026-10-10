@@ -7,3 +7,5 @@ media/
 .env.local
 .DS_Store
 __pycache__/
+test-results/
+playwright-report/

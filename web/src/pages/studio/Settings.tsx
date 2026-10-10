@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Server } from 'lucide-react';
+import { TokenCard } from '../../components/TokenCard.tsx';
 import { Button, HealthPills, Toggle } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError, useStore } from '../../lib/store.ts';
@@ -56,6 +57,8 @@ export default function Settings() {
           <code className="rounded bg-white/5 px-1 font-mono text-fg-2">LLM_API_BASE</code> 等），说明见仓库 README。
         </p>
       </section>
+
+      {user?.isAdmin && <TokenCard />}
 
       <section className="panel flex items-center justify-between gap-4 p-5">
         <div>

@@ -8,6 +8,7 @@ import { useStore } from '../lib/store.ts';
 export default function Auth({ mode }: { mode: 'login' | 'register' }) {
   const user = useStore((s) => s.user);
   const setSession = useStore((s) => s.setSession);
+  const registrationOpen = useStore((s) => s.site.registration === 'open');
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -59,6 +60,11 @@ export default function Auth({ mode }: { mode: 'login' | 'register' }) {
           <p className="mt-2 text-sm text-fg-3 animate-fade-up">
             {isLogin ? '登录后继续你的创作' : '注册即可开始生成图片与视频'}
           </p>
+          {!isLogin && !registrationOpen && (
+            <p className="mt-6 rounded-lg border border-line bg-white/[0.04] px-3 py-2 text-sm text-fg-2">
+              本站暂未开放注册，只有管理员指定的邮箱可以创建账号。
+            </p>
+          )}
           <form onSubmit={submit} className="mt-8 space-y-4 animate-fade-up" style={{ animationDelay: '80ms' }}>
             {!isLogin && (
               <div>
@@ -89,12 +95,14 @@ export default function Auth({ mode }: { mode: 'login' | 'register' }) {
               {isLogin ? '登录' : '注册并开始'}
             </Button>
           </form>
-          <p className="mt-6 text-center text-sm text-fg-3">
-            {isLogin ? '还没有账号？' : '已有账号？'}
-            <Link to={`${isLogin ? '/register' : '/login'}${params.toString() ? `?${params}` : ''}`} className="ml-1 text-fg hover:text-cyan">
-              {isLogin ? '立即注册' : '去登录'}
-            </Link>
-          </p>
+          {(!isLogin || registrationOpen) && (
+            <p className="mt-6 text-center text-sm text-fg-3">
+              {isLogin ? '还没有账号？' : '已有账号？'}
+              <Link to={`${isLogin ? '/register' : '/login'}${params.toString() ? `?${params}` : ''}`} className="ml-1 text-fg hover:text-cyan">
+                {isLogin ? '立即注册' : '去登录'}
+              </Link>
+            </p>
+          )}
         </div>
       </div>
     </div>

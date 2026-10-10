@@ -76,7 +76,7 @@ const ShotCard = memo(function ShotCard({
   return (
     <div className="panel cv-auto overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 sm:px-4">
-        <span className="font-mono text-sm font-semibold text-gradient">#{String(index + 1).padStart(2, '0')}</span>
+        <span className="font-mono text-sm font-semibold text-accent">#{String(index + 1).padStart(2, '0')}</span>
         <select className="field !w-auto !py-1 !text-xs" value={shot.shotSize} onChange={(e) => set({ shotSize: e.target.value })} aria-label="景别">
           {SHOT_SIZES.map((size) => <option key={size}>{size}</option>)}
         </select>

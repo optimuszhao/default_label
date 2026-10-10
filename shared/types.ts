@@ -29,7 +29,36 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  /** 超级管理员（ADMIN_EMAILS） */
+  isAdmin: boolean;
   createdAt: number;
+}
+
+/** 站点公开配置（未登录也能读取） */
+export interface SiteInfo {
+  registration: 'open' | 'closed';
+}
+
+/** 算子 token 状态（只有管理员可见） */
+export interface TokenStatus {
+  /** 当前算子是否需要 token */
+  supported: boolean;
+  operator: string;
+  base?: string;
+  appid?: string;
+  /** 是否配置了 appid / secret */
+  configured?: boolean;
+  hasToken?: boolean;
+  /** token 的前几位，方便核对，不暴露完整内容 */
+  tokenPreview?: string | null;
+  issuedAt?: number | null;
+  expiresAt?: number | null;
+  /** 到期时间的依据：jwt = 从 token 里读出；assumed = 按文档的 72 小时推算；env = 手动配置的 token，未知 */
+  expiresBasis?: 'jwt' | 'assumed' | 'env' | null;
+  lastVerifyAt?: number | null;
+  lastVerifyOk?: boolean | null;
+  lastVerifyMessage?: string | null;
+  lastLoginError?: string | null;
 }
 
 export interface UserSettings {

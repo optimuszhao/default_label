@@ -145,7 +145,7 @@ export default function Assets() {
                 )}
                 {asset.favorite && <Heart className="absolute top-2 right-2 size-4 fill-pink text-pink drop-shadow" />}
                 {asset.prompt && (
-                  <span className={cx('pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 bg-gradient-to-t from-black/80 to-transparent p-2.5 pt-8 text-left text-[11px] text-white/85 opacity-0 transition-opacity group-hover:opacity-100')}>
+                  <span className={cx('pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 p-2.5 text-left text-[11px] text-white/85 opacity-0 transition-opacity group-hover:opacity-100')}>
                     {asset.prompt}
                   </span>
                 )}

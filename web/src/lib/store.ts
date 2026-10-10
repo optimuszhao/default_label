@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { DEFAULT_CAPABILITIES, type Capabilities } from '../../../shared/operator.ts';
-import type { Asset, ProviderHealth, ServerEvent, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
+import type { Asset, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
 import { api } from './api.ts';
 
 export interface ComposerDraft {
@@ -21,6 +21,8 @@ interface State {
   ready: boolean;
   user: User | null;
   settings: UserSettings | null;
+  /** 站点公开配置（注册是否开放等） */
+  site: SiteInfo;
   health: ProviderHealth | null;
   /** 当前算子的能力声明，决定创作台显示哪些控件 */
   capabilities: Capabilities;
@@ -49,6 +51,7 @@ export const useStore = create<State>((set, get) => ({
   ready: false,
   user: null,
   settings: null,
+  site: { registration: 'open' },
   health: null,
   capabilities: DEFAULT_CAPABILITIES,
   tasks: {},
@@ -123,6 +126,7 @@ export const useStore = create<State>((set, get) => ({
 export async function bootstrapSession(): Promise<void> {
   try {
     const session = await api.me();
+    if (session.site) useStore.setState({ site: session.site });
     useStore.getState().setSession(session.user, session.settings);
   } catch {
     useStore.getState().setSession(null, null);

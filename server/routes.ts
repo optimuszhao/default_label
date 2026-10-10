@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AssistKind, ServerEvent, StoryData, StorySummary, Task } from '../shared/types.ts';
+import type { AssistKind, ServerEvent, SiteInfo, StoryData, StorySummary, Task, TokenStatus } from '../shared/types.ts';
 import { runAssist } from './assist.ts';
-import { createUser, endSession, findUserByEmail, hashPassword, requireUser, startSession, verifyPassword } from './auth.ts';
-import { subscribe } from './bus.ts';
+import { createUser, endSession, findUserByEmail, hashPassword, requireAdmin, requireUser, startSession, verifyPassword } from './auth.ts';
+import { publish, subscribe } from './bus.ts';
 import { config } from './config.ts';
 import { db, newId, now, parseJson, type Row } from './db.ts';
 import { absoluteFile, ALLOWED_UPLOAD_MIME, deleteAssetFile, saveAsset } from './files.ts';
@@ -234,6 +234,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/auth/register', async (request, reply) => {
     const body = parse(registerSchema, request.body, reply);
     if (!body) return;
+    if (config.registration === 'closed' && !config.adminEmails.includes(body.email)) {
+      return bad(reply, '暂未开放注册，请联系管理员', 403);
+    }
     if (findUserByEmail(body.email)) return bad(reply, '该邮箱已注册', 409);
     const user = createUser(body.email, body.name, await hashPassword(body.password));
     startSession(reply, user.id);
@@ -257,8 +260,9 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get('/api/auth/me', async (request) => {
-    if (!request.user) return { user: null, settings: null };
-    return { user: request.user, settings: getUserSettings(request.user.id) };
+    const site: SiteInfo = { registration: config.registration };
+    if (!request.user) return { user: null, settings: null, site };
+    return { user: request.user, settings: getUserSettings(request.user.id), site };
   });
 
   // 未登录只返回各能力是否可用，不暴露算子的报错细节
@@ -266,6 +270,24 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const health = await getHealth();
     if (request.user) return health;
     return { provider: health.provider, image: health.image, video: health.video, llm: health.llm, checkedAt: health.checkedAt };
+  });
+
+  // ---- 管理接口：只有 ADMIN_EMAILS 里的账号能访问，其他人一律 404 ----
+  app.register(async (admin) => {
+    admin.addHook('preHandler', requireAdmin);
+    const unsupported = (): TokenStatus => ({ supported: false, operator: provider.name });
+
+    admin.get('/api/admin/token', async () => provider.tokenStatus?.() ?? unsupported());
+    admin.post('/api/admin/token/verify', async () => {
+      const result = provider.verifyToken ? await provider.verifyToken() : unsupported();
+      void getHealth(true).then((health) => publish('*', { type: 'health', health }));
+      return result;
+    });
+    admin.post('/api/admin/token/renew', async () => {
+      const result = provider.renewToken ? await provider.renewToken() : unsupported();
+      void getHealth(true).then((health) => publish('*', { type: 'health', health }));
+      return result;
+    });
   });
 
   // ---- 以下接口需要登录 ----

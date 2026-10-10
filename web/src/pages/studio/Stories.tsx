@@ -83,7 +83,6 @@ export default function Stories() {
                       <BookOpenText className="size-6" />
                     </div>
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent" />
                   <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] backdrop-blur">
                     <Clapperboard className="size-3" /> {story.shotCount} 个镜头
                   </span>

@@ -47,6 +47,7 @@ function useTypewriter(lines: string[]) {
 
 function Nav() {
   const user = useStore((s) => s.user);
+  const registrationOpen = useStore((s) => s.site.registration === 'open');
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -77,12 +78,20 @@ function Nav() {
             </Link>
           ) : (
             <>
-              <Link to="/login" className="hidden h-8 items-center rounded-md px-3 text-[13px] text-fg-2 hover:text-fg sm:inline-flex">
+              <Link
+                to="/login"
+                className={cx(
+                  'h-8 items-center rounded-md px-3 text-[13px] text-fg-2 hover:text-fg',
+                  registrationOpen ? 'hidden sm:inline-flex' : 'inline-flex',
+                )}
+              >
                 登录
               </Link>
-              <Link to="/register" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-[13px] font-medium text-ink hover:bg-white">
-                免费注册 <ArrowRight className="size-3.5" />
-              </Link>
+              {registrationOpen && (
+                <Link to="/register" className="inline-flex h-8 items-center gap-1.5 rounded-md bg-fg px-3 text-[13px] font-medium text-ink hover:bg-white">
+                  免费注册 <ArrowRight className="size-3.5" />
+                </Link>
+              )}
             </>
           )}
         </div>
@@ -142,7 +151,8 @@ const STEPS = [
 export default function Landing() {
   const ref = useReveal<HTMLDivElement>();
   const user = useStore((s) => s.user);
-  const cta = user ? '/studio/create' : '/register';
+  const registrationOpen = useStore((s) => s.site.registration === 'open');
+  const cta = user ? '/studio/create' : registrationOpen ? '/register' : '/login';
   return (
     <div ref={ref} className="relative overflow-x-clip">
       <Nav />
@@ -150,7 +160,6 @@ export default function Landing() {
       {/* Hero：可交互点阵画布 */}
       <section className="relative isolate flex min-h-[100svh] flex-col items-center justify-center px-4 pt-20 pb-16 text-center sm:px-6">
         <DotField />
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,transparent_30%,var(--color-ink)_85%)]" />
         <span className="animate-fade-up inline-flex items-center gap-2 rounded-md border border-line bg-ink/70 px-2.5 py-1 font-mono text-[11px] tracking-wide text-fg-2 backdrop-blur">
           <span className="size-1.5 rounded-full bg-accent" />
           AI 影像创作平台 · 文生图 / 文生视频 / 故事分镜
@@ -305,7 +314,7 @@ export default function Landing() {
           <DotField spacing={18} idle={false} />
           <div className="relative flex flex-col items-center px-6 py-16 text-center sm:py-20">
             <h2 className="text-2xl font-semibold tracking-tight sm:text-4xl">现在，画下你的第一个镜头</h2>
-            <p className="mt-3 text-sm text-fg-3">注册即可使用全部创作功能</p>
+            <p className="mt-3 text-sm text-fg-3">{registrationOpen ? '注册即可使用全部创作功能' : '登录后使用全部创作功能'}</p>
             <Link to={cta} className="mt-7 inline-flex h-11 items-center gap-2 rounded-lg bg-fg px-5 text-sm font-medium text-ink transition hover:bg-white active:scale-[0.98]">
               开始创作 <ArrowRight className="size-4" />
             </Link>

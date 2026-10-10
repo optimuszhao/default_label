@@ -2,7 +2,7 @@
 // 业务代码（调度器、AI 助手）只依赖这里的 Provider 接口，
 // 具体对接 ComfyUI / MiniMax / 千问 Image / LLM 的细节都在各自的实现里。
 import type { Capabilities } from '../../shared/operator.ts';
-import type { Capability, GenParams, TaskType } from '../../shared/types.ts';
+import type { Capability, GenParams, TaskType, TokenStatus } from '../../shared/types.ts';
 
 export interface ProviderImageInput {
   role: 'reference' | 'first_frame' | 'last_frame';
@@ -61,6 +61,10 @@ export interface Provider {
   health(): Promise<Record<Capability, boolean> & { message?: string }>;
   submit(input: SubmitInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<JobStatus>;
+  /** 需要 token 的算子：查看 token 状态、立即校验、重新获取 */
+  tokenStatus?(): TokenStatus;
+  verifyToken?(): Promise<TokenStatus>;
+  renewToken?(): Promise<TokenStatus>;
   /** 两次查询之间的最短间隔（毫秒），不实现时每个调度节拍都查 */
   pollIntervalMs?(jobId: string): number;
   cancel(jobId: string): Promise<void>;

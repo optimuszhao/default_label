@@ -546,7 +546,7 @@ const TaskCard = memo(function TaskCard({ task, onOpen }: { task: Task; onOpen: 
                     <Play className="size-2.5 fill-current" /> {task.params.duration}s
                   </span>
                 )}
-                <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-100 transition-opacity duration-200 sm:opacity-0 sm:group-hover:opacity-100">
+                <div className="absolute inset-x-0 bottom-0 flex justify-end gap-1 bg-black/55 p-2 opacity-100 transition-opacity duration-200 sm:opacity-0 sm:group-hover:opacity-100">
                   {!isVideo && (
                     <>
                       <IconButton label="图生图" className="size-8 bg-black/40" onClick={() => reuse.toImage(asset)}>

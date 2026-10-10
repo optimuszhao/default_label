@@ -20,6 +20,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DEFAULT_CAPABILITIES, IMAGE_RESOLUTIONS, type Capabilities } from '../../shared/operator.ts';
+import type { TokenStatus } from '../../shared/types.ts';
 import { newTempFile } from '../files.ts';
 import { config } from '../config.ts';
 import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
@@ -52,9 +53,41 @@ const TOKEN_TTL_MS = 71 * 60 * 60 * 1000;
 /** 健康检查里校验 token 的间隔 */
 const VERIFY_EVERY_MS = 5 * 60 * 1000;
 
+const TOKEN_LIFETIME_MS = 72 * 60 * 60 * 1000;
+
 let token = config.comfyToken;
+/** 到这个时间就主动换新（比真实到期早 1 小时） */
 let tokenExpiresAt = token ? Number.POSITIVE_INFINITY : 0;
 let verifiedAt = 0;
+
+/** 给管理员看的令牌状态 */
+const status = {
+  issuedAt: null as number | null,
+  expiresAt: null as number | null,
+  expiresBasis: (config.comfyToken ? 'env' : null) as TokenStatus['expiresBasis'],
+  lastVerifyAt: null as number | null,
+  lastVerifyOk: null as boolean | null,
+  lastVerifyMessage: null as string | null,
+  lastLoginError: null as string | null,
+};
+
+/** token 是 JWT 时读出真实到期时间 */
+function jwtExpiry(value: string): number | null {
+  const parts = value.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as { exp?: unknown };
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordVerify(ok: boolean, message: string | null): void {
+  status.lastVerifyAt = Date.now();
+  status.lastVerifyOk = ok;
+  status.lastVerifyMessage = message;
+}
 let loginInflight: Promise<string> | null = null;
 const warned = new Set<string>();
 
@@ -77,7 +110,13 @@ function credentials(): Json {
 }
 
 async function login(): Promise<string> {
-  const body = JSON.stringify(credentials());
+  let body: string;
+  try {
+    body = JSON.stringify(credentials());
+  } catch (error) {
+    status.lastLoginError = (error as Error).message;
+    throw error;
+  }
   loginInflight ??= (async () => {
     let response: Response;
     try {
@@ -97,12 +136,24 @@ async function login(): Promise<string> {
       throw new ProviderUnavailableError(`生成服务登录失败：${errorText(data) ?? `HTTP ${response.status}`}`);
     }
     token = data.token;
-    tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+    const issuedAt = Date.now();
+    const exp = jwtExpiry(token);
+    status.issuedAt = issuedAt;
+    status.expiresAt = exp ?? issuedAt + TOKEN_LIFETIME_MS;
+    status.expiresBasis = exp ? 'jwt' : 'assumed';
+    status.lastLoginError = null;
+    // 提前 1 小时换新，避免长视频任务中途过期
+    tokenExpiresAt = exp ? exp - 3600_000 : issuedAt + TOKEN_TTL_MS;
     verifiedAt = Date.now();
     return token;
-  })().finally(() => {
-    loginInflight = null;
-  });
+  })()
+    .catch((error) => {
+      status.lastLoginError = (error as Error).message;
+      throw error;
+    })
+    .finally(() => {
+      loginInflight = null;
+    });
   return loginInflight;
 }
 
@@ -110,6 +161,23 @@ function forgetToken(): void {
   token = '';
   tokenExpiresAt = 0;
   verifiedAt = 0;
+  status.issuedAt = null;
+  status.expiresAt = null;
+  status.expiresBasis = null;
+}
+
+/** 调用 /api/auth/verify 校验当前 token（没有 token 时会先登录） */
+async function verifyNow(): Promise<void> {
+  const response = await call('GET', '/api/auth/verify', undefined, true, 10_000);
+  const data = (await response.json().catch(() => ({}))) as Json;
+  if (!response.ok || data.valid === false) {
+    const message = `生成服务凭证无效：${errorText(data) ?? `HTTP ${response.status}`}`;
+    recordVerify(false, message);
+    forgetToken();
+    throw new ProviderUnavailableError(message);
+  }
+  verifiedAt = Date.now();
+  recordVerify(true, typeof data.appid === 'string' ? `appid ${data.appid} 有效` : 'token 有效');
 }
 
 async function ensureToken(): Promise<string> {
@@ -514,15 +582,7 @@ export class ComfyWebProvider implements Provider {
         }
       }
       // 服务在线时顺便确认凭证可用（每 5 分钟一次）：密钥配错时在设置页直接看到原因
-      if (reachable && Date.now() - verifiedAt > verifyEvery) {
-        const verify = await call('GET', '/api/auth/verify', undefined, true, 10_000);
-        const data = (await verify.json().catch(() => ({}))) as Json;
-        if (!verify.ok || data.valid === false) {
-          forgetToken();
-          throw new ProviderUnavailableError(`生成服务凭证无效：${errorText(data) ?? `HTTP ${verify.status}`}`);
-        }
-        verifiedAt = Date.now();
-      }
+      if (reachable && Date.now() - verifiedAt > verifyEvery) await verifyNow();
     } catch (error) {
       reachable = false;
       message = (error as Error).message;
@@ -543,6 +603,41 @@ export class ComfyWebProvider implements Provider {
     for (let index = 0; index < count; index++) ids.push(await submitOne(input, index));
     const kind = input.type.endsWith('v') ? 'video' : 'image';
     return { jobId: `${kind}:${ids.join(',')}` };
+  }
+
+  tokenStatus(): TokenStatus {
+    return {
+      supported: true,
+      operator: this.name,
+      base: config.genApiBase,
+      appid: config.comfyAppId || undefined,
+      configured: Boolean((config.comfyAppId && config.comfySecret) || (config.comfyEmail && config.comfyPassword) || config.comfyToken),
+      hasToken: Boolean(token),
+      tokenPreview: token ? `${token.slice(0, 6)}…${token.slice(-4)}` : null,
+      ...status,
+    };
+  }
+
+  async verifyToken(): Promise<TokenStatus> {
+    const started = Date.now();
+    try {
+      await verifyNow();
+    } catch (error) {
+      // verifyNow 自己记录了“凭证无效”；连不上、登录失败等其他错误在这里记录
+      if (!status.lastVerifyAt || status.lastVerifyAt < started) recordVerify(false, (error as Error).message);
+    }
+    return this.tokenStatus();
+  }
+
+  async renewToken(): Promise<TokenStatus> {
+    forgetToken();
+    try {
+      await login();
+      await verifyNow();
+    } catch (error) {
+      recordVerify(false, (error as Error).message);
+    }
+    return this.tokenStatus();
   }
 
   pollIntervalMs(jobId: string): number {

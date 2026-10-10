@@ -41,3 +41,6 @@ services:
       VIDEO_JOB_TIMEOUT_MS: ${VIDEO_JOB_TIMEOUT_MS:-5400000}
       # 通过 HTTPS 反向代理访问时设为 1
       COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # 超级管理员邮箱（逗号分隔）；REGISTRATION=closed 时只有这些邮箱能注册
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      REGISTRATION: ${REGISTRATION:-open}

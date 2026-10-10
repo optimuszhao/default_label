@@ -11,6 +11,8 @@ import type {
   TaskLink,
   TaskType,
   GenParams,
+  SiteInfo,
+  TokenStatus,
   User,
   UserSettings,
 } from '../../../shared/types.ts';
@@ -44,6 +46,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 export interface Session {
   user: User | null;
   settings: UserSettings | null;
+  site?: SiteInfo;
 }
 
 export interface NewTask {
@@ -69,6 +72,11 @@ export const api = {
   health: () => request<ProviderHealth>('GET', '/api/health'),
   refreshHealth: () => request<ProviderHealth>('POST', '/api/health/refresh'),
   capabilities: () => request<Capabilities>('GET', '/api/capabilities'),
+
+  // 管理员：算子令牌
+  tokenStatus: () => request<TokenStatus>('GET', '/api/admin/token'),
+  verifyToken: () => request<TokenStatus>('POST', '/api/admin/token/verify'),
+  renewToken: () => request<TokenStatus>('POST', '/api/admin/token/renew'),
 
   tasks: (query: { status?: string; storyId?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();

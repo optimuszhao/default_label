@@ -23,6 +23,8 @@ const WAVE_WIDTH = 70; // 波峰宽度
 const RIPPLE_LIFE = 2.4; // 秒
 const MAX_RIPPLES = 28;
 const BRUSH_RADIUS = 90;
+/** 静止点按渐隐程度分 21 档，预先生成颜色字符串，避免每帧拼字符串 */
+const REST_STYLES = Array.from({ length: 21 }, (_, k) => `rgba(255,255,255,${((0.13 * k) / 20).toFixed(4)})`);
 
 function hexToRgb(hex: string): [number, number, number] {
   const value = hex.replace('#', '');
@@ -61,6 +63,8 @@ export function DotField({
     let baseX = new Float32Array(0);
     let baseY = new Float32Array(0);
     let energy = new Float32Array(0);
+    /** 每个点的基础透明度：中间清晰、四周渐隐（代替原来叠在上面的径向暗角） */
+    let fade = new Float32Array(0);
     const ripples: Ripple[] = [];
     let frame = 0;
     let running = false;
@@ -85,11 +89,17 @@ export function DotField({
       baseX = new Float32Array(count);
       baseY = new Float32Array(count);
       energy = new Float32Array(count);
+      fade = new Float32Array(count);
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
           baseX[i] = offsetX + c * gap;
           baseY[i] = offsetY + r * gap;
+          // 椭圆距离：中心 0，四角 1；30% 以内不衰减，85% 处完全隐去
+          const nx = (baseX[i] - width / 2) / (width / 2);
+          const ny = (baseY[i] - height / 2) / (height / 2);
+          const p = Math.sqrt(nx * nx + ny * ny) / Math.SQRT2;
+          fade[i] = 1 - Math.min(1, Math.max(0, (p - 0.3) / 0.55));
         }
       }
       draw(performance.now());
@@ -154,15 +164,17 @@ export function DotField({
         }
 
         const glow = Math.min(1, e + lift);
+        const f = fade[i];
+        if (f < 0.02) continue;
         if (glow < 0.01) {
-          ctx!.fillStyle = 'rgba(255,255,255,0.13)';
+          ctx!.fillStyle = REST_STYLES[Math.round(f * (REST_STYLES.length - 1))];
           ctx!.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
         } else {
           const size = 1.5 + glow * 2.2;
           const r = Math.round(255 + (ar - 255) * glow);
           const g = Math.round(255 + (ag - 255) * glow);
           const b = Math.round(255 + (ab - 255) * glow);
-          ctx!.fillStyle = `rgba(${r},${g},${b},${0.13 + glow * 0.8})`;
+          ctx!.fillStyle = `rgba(${r},${g},${b},${((0.13 + glow * 0.8) * f).toFixed(3)})`;
           ctx!.fillRect(x - size / 2, y - size / 2, size, size);
         }
       }

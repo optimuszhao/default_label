@@ -71,6 +71,13 @@ export function userFromRequest(request: FastifyRequest): User | null {
   return row ? toUser(row) : null;
 }
 
+/** 管理接口前置钩子：非管理员一律 404，不暴露接口存在 */
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!request.user?.isAdmin) {
+    await reply.code(404).send({ error: 'Not Found' });
+  }
+}
+
 /** 路由前置钩子：未登录返回 401 */
 export async function requireUser(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (!request.user) {

@@ -64,6 +64,14 @@ export const config = {
   /** 视频任务最长运行时间：含转码和 2x 超分，单条通常 15–30 分钟，排队时更久 */
   videoJobTimeoutMs: num('VIDEO_JOB_TIMEOUT_MS', 90 * 60 * 1000),
 
+  /** 超级管理员邮箱（逗号分隔）。M0a 只用来控制令牌状态等管理功能的可见性 */
+  adminEmails: (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+  /** 注册开关：open 开放注册；closed 关闭（ADMIN_EMAILS 里的邮箱仍可注册） */
+  registration: (process.env.REGISTRATION === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
+
   sessionDays: num('SESSION_DAYS', 30),
   cookieSecure: process.env.COOKIE_SECURE === '1',
   maxUploadMb: num('MAX_UPLOAD_MB', 20),
