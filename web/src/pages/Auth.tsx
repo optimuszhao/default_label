@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Logo } from '../components/ui.tsx';
-import { Scene } from '../components/Scene.tsx';
+import { DotField } from '../components/DotField.tsx';
 import { api } from '../lib/api.ts';
 import { useStore } from '../lib/store.ts';
 
@@ -38,23 +38,19 @@ export default function Auth({ mode }: { mode: 'login' | 'register' }) {
   const isLogin = mode === 'login';
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      <div className="relative hidden overflow-hidden lg:block">
-        <div className="absolute inset-0">
-          <Scene index={4} showCaption={false} className="size-full" />
-        </div>
-        <div className="absolute inset-0 bg-gradient-to-r from-black/20 to-ink" />
+      <div className="relative isolate hidden overflow-hidden border-r border-line lg:block">
+        <DotField />
         <div className="absolute bottom-12 left-12 max-w-md">
           <p className="text-4xl font-semibold leading-tight tracking-tight">
             每个故事，
             <br />
-            <span className="text-gradient">都值得被看见</span>
+            都值得被<span className="text-accent">看见</span>
           </p>
-          <p className="mt-4 text-fg-2">大纲 · 角色 · 台词 · 分镜 · 成片，一站完成。</p>
+          <p className="mt-4 text-sm text-fg-2">大纲 · 角色 · 台词 · 分镜 · 成片，一站完成。</p>
         </div>
       </div>
 
       <div className="relative flex flex-col px-5 py-6 sm:px-10">
-        <div className="pointer-events-none absolute -top-40 right-0 size-96 rounded-full bg-violet/20 blur-[120px] lg:hidden" />
         <Link to="/" className="self-start">
           <Logo />
         </Link>

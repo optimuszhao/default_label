@@ -24,10 +24,10 @@ export default function Settings() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 sm:px-6 md:py-10">
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">设置</h1>
+      <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">设置</h1>
 
       <section className="panel flex items-center gap-4 p-5">
-        <span className="bg-brand flex size-14 items-center justify-center rounded-2xl text-xl font-semibold text-white">
+        <span className="bg-brand flex size-14 items-center justify-center rounded-xl text-xl font-semibold text-white">
           {user?.name.slice(0, 1).toUpperCase()}
         </span>
         <div className="min-w-0 flex-1">

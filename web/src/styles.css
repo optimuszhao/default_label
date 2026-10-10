@@ -5,18 +5,21 @@
     'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
 
-  --color-ink: #050507;
-  --color-ink-1: #0b0b10;
-  --color-ink-2: #111118;
-  --color-ink-3: #18181f;
+  --color-ink: #09090b;
+  --color-ink-1: #111113;
+  --color-ink-2: #18181b;
+  --color-ink-3: #202024;
   --color-line: rgb(255 255 255 / 0.08);
   --color-line-strong: rgb(255 255 255 / 0.14);
   --color-fg: #f4f4f6;
-  --color-fg-2: #b4b6c0;
-  --color-fg-3: #7d808c;
-  --color-cyan: #5ee7ff;
-  --color-violet: #8b5cf6;
-  --color-pink: #ff5ea8;
+  --color-fg-2: #b4b4bb;
+  --color-fg-3: #7c7c85;
+  /* 单一主色：所有强调、选中、进度都用它 */
+  --color-accent: #4d8dff;
+  --color-accent-hover: #6aa0ff;
+  --color-cyan: #67c7ff;
+  --color-violet: #4d8dff;
+  --color-pink: #ff6b9a;
   --color-lime: #c6ff5e;
   --color-danger: #ff5d6c;
   --color-warn: #ffb547;
@@ -72,7 +75,7 @@
     overscroll-behavior-y: none;
   }
   ::selection {
-    background: rgb(139 92 246 / 0.45);
+    background: rgb(77 141 255 / 0.4);
   }
   * {
     scrollbar-width: thin;
@@ -95,7 +98,7 @@
 
 @layer components {
   .glass {
-    background: rgb(20 20 28 / 0.62);
+    background: rgb(17 17 19 / 0.72);
     backdrop-filter: blur(20px) saturate(160%);
     -webkit-backdrop-filter: blur(20px) saturate(160%);
     border: 1px solid var(--color-line);
@@ -103,31 +106,17 @@
   .panel {
     background: var(--color-ink-1);
     border: 1px solid var(--color-line);
-    border-radius: 1.25rem;
+    border-radius: 0.75rem;
   }
+  /* 历史类名保留，统一改为纯色强调，不再使用渐变 */
   .text-gradient {
-    background: linear-gradient(100deg, var(--color-cyan) 0%, var(--color-violet) 45%, var(--color-pink) 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--color-accent);
   }
   .bg-brand {
-    background: linear-gradient(100deg, var(--color-cyan) 0%, var(--color-violet) 50%, var(--color-pink) 100%);
+    background: var(--color-accent);
   }
   .ring-brand {
-    position: relative;
-  }
-  .ring-brand::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(120deg, rgb(94 231 255 / 0.7), rgb(139 92 246 / 0.5), rgb(255 94 168 / 0.7));
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
+    border-color: var(--color-line-strong);
   }
   .skeleton {
     background: linear-gradient(90deg, rgb(255 255 255 / 0.04) 0%, rgb(255 255 255 / 0.1) 50%, rgb(255 255 255 / 0.04) 100%);
@@ -136,10 +125,10 @@
   }
   .field {
     width: 100%;
-    background: rgb(255 255 255 / 0.04);
+    background: rgb(255 255 255 / 0.03);
     border: 1px solid var(--color-line);
-    border-radius: 0.75rem;
-    padding: 0.625rem 0.875rem;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
     color: var(--color-fg);
     transition: border-color 0.2s, background 0.2s;
   }
@@ -148,7 +137,7 @@
   }
   .field:focus {
     outline: none;
-    border-color: rgb(139 92 246 / 0.7);
+    border-color: rgb(77 141 255 / 0.8);
     background: rgb(255 255 255 / 0.06);
   }
   .label {
@@ -163,8 +152,8 @@
     align-items: center;
     gap: 0.375rem;
     height: 2rem;
-    padding: 0 0.75rem;
-    border-radius: 999px;
+    padding: 0 0.625rem;
+    border-radius: 0.5rem;
     font-size: 0.8125rem;
     color: var(--color-fg-2);
     background: rgb(255 255 255 / 0.05);
@@ -178,8 +167,8 @@
   }
   .chip[data-active='true'] {
     color: var(--color-fg);
-    background: rgb(139 92 246 / 0.18);
-    border-color: rgb(139 92 246 / 0.55);
+    background: rgb(77 141 255 / 0.14);
+    border-color: rgb(77 141 255 / 0.55);
   }
   .noise {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
@@ -188,6 +177,10 @@
     background-image: linear-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1px),
       linear-gradient(90deg, rgb(255 255 255 / 0.045) 1px, transparent 1px);
     background-size: 64px 64px;
+  }
+  .dots-bg {
+    background-image: radial-gradient(rgb(255 255 255 / 0.13) 1px, transparent 1.2px);
+    background-size: 10px 10px;
   }
   .no-scrollbar {
     scrollbar-width: none;

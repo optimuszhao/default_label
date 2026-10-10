@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, Info, Loader2, X } from 'lucide-react';
 import { TASK_STATUS_LABEL, type Asset, type TaskStatus } from '../../../shared/types.ts';
@@ -8,27 +8,11 @@ import { cx } from '../lib/util.ts';
 // ---------------- Logo ----------------
 
 export function Logo({ className, compact }: { className?: string; compact?: boolean }) {
-  // 页面上可能同时存在多个 Logo（其中一个被隐藏），渐变 id 必须唯一
-  const gradientId = `logo${useId().replace(/[^\w-]/g, '')}`;
   return (
     <span className={cx('inline-flex items-center gap-2 font-semibold tracking-tight', className)}>
       <svg viewBox="0 0 64 64" className="size-7 shrink-0" aria-hidden>
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#5ee7ff" />
-            <stop offset=".5" stopColor="#8b5cf6" />
-            <stop offset="1" stopColor="#ff5ea8" />
-          </linearGradient>
-        </defs>
-        <rect width="64" height="64" rx="16" fill="#101018" />
-        <path
-          d="M14 20c6 0 8 24 12 24s6-24 10-24 6 24 10 24 4-12 6-12"
-          fill="none"
-          stroke={`url(#${gradientId})`}
-          strokeWidth="5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <rect width="64" height="64" rx="14" fill="#4d8dff" />
+        <path d="M14 22c6 0 8 22 12 22s6-22 10-22 6 22 10 22 4-10 6-10" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       {!compact && (
         <span className="text-[15px]">
@@ -60,15 +44,15 @@ export function Button({
 }) {
   const styles: Record<Variant, string> = {
     primary: 'bg-fg text-ink hover:bg-white',
-    brand: 'bg-brand text-white shadow-[0_8px_30px_-8px_rgb(139_92_246/0.7)] hover:brightness-110',
+    brand: 'bg-accent text-white hover:bg-accent-hover',
     secondary: 'bg-white/[0.06] text-fg border border-line hover:bg-white/[0.1]',
     ghost: 'text-fg-2 hover:text-fg hover:bg-white/[0.06]',
     danger: 'bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25',
   };
   const sizes = {
-    sm: 'h-8 px-3 text-[13px] gap-1.5 rounded-lg',
-    md: 'h-10 px-4 text-sm gap-2 rounded-xl',
-    lg: 'h-12 px-6 text-[15px] gap-2 rounded-2xl',
+    sm: 'h-8 px-3 text-[13px] gap-1.5 rounded-md',
+    md: 'h-9 px-3.5 text-[13px] gap-2 rounded-lg',
+    lg: 'h-11 px-5 text-sm gap-2 rounded-lg',
   };
   return (
     <button
@@ -99,7 +83,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cx(
-        'inline-flex size-9 items-center justify-center rounded-xl text-fg-2 transition-colors hover:bg-white/[0.08] hover:text-fg disabled:opacity-40',
+        'inline-flex size-9 items-center justify-center rounded-lg text-fg-2 transition-colors hover:bg-white/[0.08] hover:text-fg disabled:opacity-40',
         active && 'bg-white/[0.1] text-fg',
         className,
       )}
@@ -126,7 +110,7 @@ export function Segmented<T extends string>({
   size?: 'sm' | 'md';
 }) {
   return (
-    <div className={cx('inline-flex rounded-xl bg-white/[0.05] p-1 border border-line', className)} role="tablist">
+    <div className={cx('inline-flex rounded-lg bg-white/[0.04] p-0.5 border border-line', className)} role="tablist">
       {options.map((option) => (
         <button
           key={option.value}
@@ -134,7 +118,7 @@ export function Segmented<T extends string>({
           aria-selected={value === option.value}
           onClick={() => onChange(option.value)}
           className={cx(
-            'inline-flex items-center gap-1.5 rounded-lg font-medium transition-all duration-200 whitespace-nowrap',
+            'inline-flex items-center gap-1.5 rounded-md font-medium transition-all duration-200 whitespace-nowrap',
             size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3.5 text-[13px]',
             value === option.value ? 'bg-white/[0.12] text-fg shadow-sm' : 'text-fg-3 hover:text-fg-2',
           )}
@@ -181,7 +165,7 @@ export function Modal({
       <div
         className={cx(
           'relative w-full max-h-[92dvh] overflow-auto animate-fade-up',
-          bare ? '' : 'panel rounded-b-none sm:rounded-[1.25rem] bg-ink-1 p-5 sm:p-6 pb-safe',
+          bare ? '' : 'panel rounded-b-none sm:rounded-xl bg-ink-1 p-5 sm:p-6 pb-safe',
           wide ? 'sm:max-w-5xl' : 'sm:max-w-lg',
         )}
       >
@@ -211,7 +195,7 @@ export function Toasts() {
         <button
           key={toast.id}
           onClick={() => dismiss(toast.id)}
-          className="glass pointer-events-auto flex max-w-md items-center gap-2.5 rounded-2xl px-4 py-2.5 text-sm shadow-2xl animate-fade-up"
+          className="glass pointer-events-auto flex max-w-md items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm shadow-2xl animate-fade-up"
         >
           {toast.kind === 'success' && <CheckCircle2 className="size-4 shrink-0 text-ok" />}
           {toast.kind === 'error' && <AlertCircle className="size-4 shrink-0 text-danger" />}
@@ -253,7 +237,7 @@ export function ProgressBar({ value, className }: { value: number; className?: s
   return (
     <div className={cx('h-1 w-full overflow-hidden rounded-full bg-white/[0.06]', className)}>
       <div
-        className="h-full rounded-full bg-brand transition-[width] duration-700 ease-out"
+        className="h-full rounded-full bg-accent transition-[width] duration-700 ease-out"
         style={{ width: `${Math.round(Math.min(1, Math.max(0, value)) * 100)}%` }}
       />
     </div>
@@ -351,8 +335,8 @@ export function Media({
 
 export function Empty({ icon, title, hint, action }: { icon: ReactNode; title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-line px-6 py-16 text-center">
-      <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-white/[0.04] text-fg-2">{icon}</div>
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line px-6 py-14 text-center">
+      <div className="mb-4 flex size-12 items-center justify-center rounded-xl bg-white/[0.04] text-fg-2">{icon}</div>
       <p className="font-medium">{title}</p>
       {hint && <p className="mt-1.5 max-w-sm text-sm text-fg-3">{hint}</p>}
       {action && <div className="mt-5">{action}</div>}

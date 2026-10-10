@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BookOpenText, Clapperboard, Plus, Trash2 } from 'lucide-react';
 import type { StorySummary } from '../../../../shared/types.ts';
-import { Scene } from '../../components/Scene.tsx';
 import { Button, Empty, IconButton, Modal } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError } from '../../lib/store.ts';
@@ -50,7 +49,7 @@ export default function Stories() {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 md:py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">故事工坊</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">故事工坊</h1>
           <p className="mt-1 text-sm text-fg-3">大纲 → 角色 → 章节剧本 → 台词 → 分镜 → 成片，构建任意长度的视频故事。</p>
         </div>
         <Button variant="brand" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
@@ -62,7 +61,7 @@ export default function Stories() {
         {stories === null ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }, (_, i) => (
-              <div key={i} className="skeleton aspect-[4/3] rounded-3xl" />
+              <div key={i} className="skeleton aspect-[4/3] rounded-xl" />
             ))}
           </div>
         ) : stories.length === 0 ? (
@@ -74,13 +73,15 @@ export default function Stories() {
           />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {stories.map((story, index) => (
+            {stories.map((story) => (
               <Link key={story.id} to={`/studio/stories/${story.id}`} className="panel group overflow-hidden transition-colors hover:border-line-strong">
                 <div className="relative aspect-video overflow-hidden">
                   {story.coverUrl ? (
                     <img src={story.coverUrl} alt="" loading="lazy" className="size-full object-cover transition-transform duration-700 group-hover:scale-[1.04]" />
                   ) : (
-                    <Scene index={index} showCaption={false} animated={false} className="size-full transition-transform duration-700 group-hover:scale-[1.04]" />
+                    <div className="dots-bg flex size-full items-center justify-center bg-ink-2 text-fg-3">
+                      <BookOpenText className="size-6" />
+                    </div>
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent" />
                   <span className="absolute bottom-3 left-3 inline-flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] backdrop-blur">

@@ -247,8 +247,8 @@ export function ShotsTab() {
   const total = items.reduce((sum, { shot }) => sum + shot.duration, 0);
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
-      <div className="lg:sticky lg:top-6 lg:self-start">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className="lg:sticky lg:top-28 lg:self-start">
         <SceneNavigator />
       </div>
       {!found ? (
@@ -281,7 +281,7 @@ export function ShotsTab() {
 
           <button
             onClick={() => update(updateScene(found.scene.id, (s) => ({ ...s, shots: [...s.shots, newShot()] })))}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-line py-4 text-sm text-fg-3 transition hover:border-line-strong hover:text-fg"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-4 text-sm text-fg-3 transition hover:border-line-strong hover:text-fg"
           >
             <Plus className="size-4" /> 添加镜头
           </button>

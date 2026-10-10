@@ -35,10 +35,10 @@ export default function StudioLayout() {
   }, [upsertTasks, setHealth]);
 
   return (
-    <div className="min-h-dvh md:pl-[76px] lg:pl-60">
+    <div className="min-h-dvh md:pl-[76px] lg:pl-56">
       {/* 桌面侧边栏 */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[76px] flex-col border-r border-line bg-ink/80 backdrop-blur-xl md:flex lg:w-60">
-        <Link to="/" className="flex h-16 items-center px-5">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[76px] flex-col border-r border-line bg-ink/80 backdrop-blur-xl md:flex lg:w-56">
+        <Link to="/" className="flex h-14 items-center px-5">
           <Logo className="lg:hidden" compact />
           <Logo className="hidden lg:inline-flex" />
         </Link>
@@ -49,7 +49,7 @@ export default function StudioLayout() {
               to={item.to}
               className={({ isActive }) =>
                 cx(
-                  'group relative flex h-11 items-center gap-3 rounded-xl px-3 text-sm transition-colors max-lg:justify-center',
+                  'group relative flex h-9 items-center gap-2.5 rounded-lg px-3 text-[13px] transition-colors max-lg:justify-center',
                   isActive ? 'bg-white/[0.08] text-fg' : 'text-fg-3 hover:bg-white/[0.04] hover:text-fg',
                 )
               }

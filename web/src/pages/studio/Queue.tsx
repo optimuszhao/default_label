@@ -68,7 +68,7 @@ function TaskRow({ task, now }: { task: Task; now: number }) {
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-line bg-ink-1 p-3 transition-colors hover:border-line-strong sm:flex-row sm:items-center sm:p-4">
+    <div className="flex flex-col gap-3 rounded-xl border border-line bg-ink-1 p-3 transition-colors hover:border-line-strong sm:flex-row sm:items-center sm:p-4">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-ink-3">
           {preview ? <Media asset={preview} /> : isVideo ? <Film className="size-5 text-fg-3" /> : <ImageIcon className="size-5 text-fg-3" />}
@@ -213,7 +213,7 @@ export default function Queue() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 md:py-10">
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">任务队列</h1>
+      <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">任务队列</h1>
       <p className="mt-1 text-sm text-fg-3">编辑好的生成任务在这里排队，服务可用时自动或手动提交。</p>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">

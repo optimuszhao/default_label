@@ -92,7 +92,7 @@ export default function Assets() {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 md:py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">资产库</h1>
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">资产库</h1>
           <p className="mt-1 text-sm text-fg-3">所有生成和上传的图片、视频。点击查看，可直接用于图生图或图生视频。</p>
         </div>
         <input
@@ -134,7 +134,7 @@ export default function Assets() {
               <button
                 key={asset.id}
                 onClick={() => setViewing(asset.id)}
-                className="group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl border border-line bg-ink-2 sm:mb-3"
+                className="group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-xl border border-line bg-ink-2 sm:mb-3"
                 style={{ aspectRatio: asset.width && asset.height ? `${asset.width} / ${asset.height}` : '1 / 1' }}
               >
                 <Media asset={asset} className="transition-transform duration-700 ease-[var(--ease-out-expo)] group-hover:scale-[1.03]" />

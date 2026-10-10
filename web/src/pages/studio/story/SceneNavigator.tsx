@@ -6,7 +6,8 @@ import { moveItem, newChapter, newScene, updateChapter } from './model.ts';
 
 /** 章节 / 场次导航：桌面端为树形侧栏，移动端为原生下拉框（滚动与选择更顺滑） */
 export function SceneNavigator({ editable }: { editable?: boolean }) {
-  const { data, update, sceneId, setSceneId } = useStory();
+  const { data, update, sceneId, setSceneId, media } = useStory();
+  const progress = (shots: { id: string }[]) => shots.filter((shot) => media.get(shot.id)?.keyframe).length;
 
   function addChapter() {
     const chapter = newChapter({ title: `第${data.chapters.length + 1}章` });
@@ -57,7 +58,7 @@ export function SceneNavigator({ editable }: { editable?: boolean }) {
       </div>
 
       {/* 桌面端 */}
-      <nav className="panel hidden max-h-[calc(100dvh-13rem)] overflow-auto p-2 lg:block">
+      <nav className="panel hidden max-h-[calc(100dvh-9rem)] overflow-auto p-2 lg:block">
         {data.chapters.map((chapter, chapterIndex) => (
           <div key={chapter.id} className="mb-1">
             <div className="group flex items-center gap-1 rounded-lg px-2 py-1.5">
@@ -84,9 +85,13 @@ export function SceneNavigator({ editable }: { editable?: boolean }) {
                   sceneId === scene.id ? 'bg-violet/15 text-fg' : 'text-fg-3 hover:bg-white/[0.04] hover:text-fg-2',
                 )}
               >
-                <button className="min-w-0 flex-1 truncate py-2 pl-4 text-left text-sm" onClick={() => setSceneId(scene.id)}>
-                  {scene.title}
-                  {scene.shots.length > 0 && <span className="ml-1.5 text-[11px] text-fg-3">{scene.shots.length}镜</span>}
+                <button className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-4 text-left text-[13px]" onClick={() => setSceneId(scene.id)}>
+                  <span className="truncate">{scene.title}</span>
+                  {scene.shots.length > 0 && (
+                    <span className={cx('ml-auto shrink-0 font-mono text-[10px]', progress(scene.shots) === scene.shots.length ? 'text-accent' : 'text-fg-3')}>
+                      {progress(scene.shots)}/{scene.shots.length}
+                    </span>
+                  )}
                 </button>
                 {editable && (
                   <span className="flex opacity-0 transition group-hover:opacity-100">

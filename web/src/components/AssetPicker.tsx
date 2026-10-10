@@ -87,7 +87,7 @@ export function AssetPicker({
           e.preventDefault();
           void onFiles(e.dataTransfer.files);
         }}
-        className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-line-strong bg-white/[0.02] py-8 text-sm text-fg-2 transition hover:border-violet/60 hover:bg-violet/5"
+        className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line-strong bg-white/[0.02] py-8 text-sm text-fg-2 transition hover:border-accent/60 hover:bg-accent/5"
       >
         {uploading ? <Spinner /> : <Upload className="size-6" />}
         <span>点击或拖拽上传本地图片</span>

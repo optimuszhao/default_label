@@ -74,7 +74,7 @@ export function PreviewTab() {
   return (
     <div className="space-y-4">
       <div className="mx-auto max-w-4xl">
-        <div className="relative overflow-hidden rounded-2xl border border-line bg-black" style={{ aspectRatio: cssRatio(data.aspectRatio) }}>
+        <div className="relative overflow-hidden rounded-xl border border-line bg-black" style={{ aspectRatio: cssRatio(data.aspectRatio) }}>
           {playableVideo ? (
             <video
               key={playableVideo.id}

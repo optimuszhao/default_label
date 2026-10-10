@@ -119,7 +119,7 @@ function Popover({ open, onClose, children, className }: { open: boolean; onClos
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div ref={ref} className={cx('glass absolute bottom-full z-20 mb-2 rounded-2xl p-4 shadow-2xl animate-fade-up', className)}>
+    <div ref={ref} className={cx('glass absolute bottom-full z-20 mb-2 rounded-xl p-4 shadow-2xl animate-fade-up', className)}>
       {children}
     </div>
   );
@@ -240,7 +240,7 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
   const capabilityDown = health && !health[mode];
 
   return (
-    <div className="glass ring-brand rounded-3xl p-3 shadow-[0_20px_80px_-20px_rgb(0_0_0/0.9)] sm:p-4">
+    <div className="rounded-xl border border-line-strong bg-ink-1/95 p-3 shadow-[0_16px_48px_-12px_rgb(0_0_0/0.85)] backdrop-blur-xl sm:p-3.5">
       <div className="flex items-start gap-2 sm:gap-3">
         {mode === 'image' ? (
           <div className="flex gap-1.5">
@@ -473,7 +473,7 @@ const TaskCard = memo(function TaskCard({ task, onOpen }: { task: Task; onOpen: 
           ? Array.from({ length: slots }, (_, i) => (
               <div
                 key={i}
-                className="relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-line bg-ink-2"
+                className="relative flex flex-col items-center justify-center overflow-hidden rounded-xl border border-line bg-ink-2"
                 style={{ aspectRatio: cssRatio(task.params.aspectRatio) }}
               >
                 {(task.status === 'running' || task.status === 'queued') && <div className="skeleton absolute inset-0" />}
@@ -496,7 +496,7 @@ const TaskCard = memo(function TaskCard({ task, onOpen }: { task: Task; onOpen: 
           : outputs.map((asset) => (
               <div
                 key={asset.id}
-                className="group relative overflow-hidden rounded-2xl border border-line bg-ink-2"
+                className="group relative overflow-hidden rounded-xl border border-line bg-ink-2"
                 style={{ aspectRatio: cssRatio(task.params.aspectRatio) }}
               >
                 <button className="absolute inset-0" onClick={() => onOpen(asset)} aria-label="查看大图">
@@ -588,7 +588,7 @@ export default function Create() {
     <div className="mx-auto flex min-h-[calc(100dvh-56px-76px)] max-w-5xl flex-col px-4 pt-6 sm:px-6 md:min-h-dvh md:pt-10">
       <div className="mb-6 flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
             {mode === 'image' ? '图片生成' : '视频生成'}
           </h1>
           <p className="mt-1 text-sm text-fg-3">

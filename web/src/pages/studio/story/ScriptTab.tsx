@@ -3,7 +3,7 @@ import { ArrowRight, BookOpenText, ChevronDown, ChevronUp, MessageSquarePlus, Sp
 import type { DialogueLine } from '../../../../../shared/types.ts';
 import { Button, Empty, IconButton, Modal } from '../../../components/ui.tsx';
 import { api } from '../../../lib/api.ts';
-import { reportError, useStore } from '../../../lib/store.ts';
+import { reportError } from '../../../lib/store.ts';
 import { useStory } from './context.tsx';
 import { findScene, moveItem, newChapter, newDialogue, newScene, updateChapter, updateScene } from './model.ts';
 import { SceneNavigator } from './SceneNavigator.tsx';
@@ -14,7 +14,7 @@ interface AiChapter {
   scenes: { title: string; location: string; time: string; summary: string }[];
 }
 
-function SplitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { data, update, setSceneId } = useStory();
   const [chapters, setChapters] = useState(3);
   const [scenes, setScenes] = useState(3);
@@ -190,34 +190,12 @@ function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
 }
 
 export function ScriptTab({ onGoShots }: { onGoShots: () => void }) {
-  const { data } = useStory();
-  const [splitting, setSplitting] = useState(false);
-  const sceneCount = data.chapters.reduce((sum, c) => sum + c.scenes.length, 0);
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-fg-3">
-          {data.chapters.length} 章 · {sceneCount} 场 —— 长篇故事按「章节 → 场次」组织，可以无限追加。
-        </p>
-        <Button
-          size="sm"
-          variant="brand"
-          icon={<Sparkles className="size-3.5" />}
-          onClick={() => {
-            if (!data.outline.trim()) useStore.getState().toast('建议先写好故事大纲', 'info');
-            setSplitting(true);
-          }}
-        >
-          AI 拆分章节
-        </Button>
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className="lg:sticky lg:top-28 lg:self-start">
+        <SceneNavigator editable />
       </div>
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        <div className="lg:sticky lg:top-6 lg:self-start">
-          <SceneNavigator editable />
-        </div>
-        <SceneEditor onGoShots={onGoShots} />
-      </div>
-      <SplitDialog open={splitting} onClose={() => setSplitting(false)} />
+      <SceneEditor onGoShots={onGoShots} />
     </div>
   );
 }
