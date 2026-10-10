@@ -1,0 +1,112 @@
+import type {
+  Asset,
+  AssistKind,
+  ProviderHealth,
+  Story,
+  StoryData,
+  StorySummary,
+  Task,
+  TaskInputs,
+  TaskLink,
+  TaskType,
+  GenParams,
+  User,
+  UserSettings,
+} from '../../../shared/types.ts';
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const isForm = body instanceof FormData;
+  const response = await fetch(url, {
+    method,
+    credentials: 'same-origin',
+    headers: body === undefined || isForm ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new ApiError(response.status, (data && data.error) || `请求失败（${response.status}）`);
+  }
+  return data as T;
+}
+
+export interface Session {
+  user: User | null;
+  settings: UserSettings | null;
+}
+
+export interface NewTask {
+  type: TaskType;
+  title?: string;
+  prompt: string;
+  negativePrompt?: string;
+  params: GenParams;
+  inputs?: TaskInputs;
+  link?: TaskLink;
+  priority?: number;
+  runNow?: boolean;
+}
+
+export const api = {
+  me: () => request<Session>('GET', '/api/auth/me'),
+  login: (email: string, password: string) => request<Session>('POST', '/api/auth/login', { email, password }),
+  register: (email: string, name: string, password: string) =>
+    request<Session>('POST', '/api/auth/register', { email, name, password }),
+  logout: () => request('POST', '/api/auth/logout'),
+  updateSettings: (patch: Partial<UserSettings>) => request<UserSettings>('PATCH', '/api/settings', patch),
+
+  health: () => request<ProviderHealth>('GET', '/api/health'),
+  refreshHealth: () => request<ProviderHealth>('POST', '/api/health/refresh'),
+
+  tasks: (query: { status?: string; storyId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value));
+    return request<Task[]>('GET', `/api/tasks?${params}`);
+  },
+  createTask: (task: NewTask) => request<Task>('POST', '/api/tasks', task),
+  createTasks: (tasks: NewTask[]) => request<Task[]>('POST', '/api/tasks/batch', { tasks }),
+  taskAction: (id: string, action: 'run' | 'pause' | 'resume' | 'cancel' | 'retry') =>
+    request<Task>('POST', `/api/tasks/${id}/${action}`),
+  setPriority: (id: string, priority: number) => request<Task>('PATCH', `/api/tasks/${id}`, { priority }),
+  deleteTask: (id: string) => request('DELETE', `/api/tasks/${id}`),
+  queueAction: (action: 'run-all' | 'pause-all' | 'resume-all' | 'clear-finished') =>
+    request<{ count: number }>('POST', `/api/queue/${action}`),
+
+  assets: (query: { kind?: string; storyId?: string; favorite?: boolean; source?: string; before?: number; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === false) continue;
+      params.set(key, value === true ? '1' : String(value));
+    }
+    return request<Asset[]>('GET', `/api/assets?${params}`);
+  },
+  upload: (file: File, size?: { width: number; height: number }) => {
+    const form = new FormData();
+    // multipart 字段需在文件之前，服务端才能在 file() 时拿到
+    if (size) {
+      form.append('width', String(size.width));
+      form.append('height', String(size.height));
+    }
+    form.append('file', file);
+    return request<Asset>('POST', '/api/assets/upload', form);
+  },
+  favorite: (id: string, favorite: boolean) => request<Asset>('PATCH', `/api/assets/${id}`, { favorite }),
+  deleteAsset: (id: string) => request('DELETE', `/api/assets/${id}`),
+
+  stories: () => request<StorySummary[]>('GET', '/api/stories'),
+  createStory: (title: string, logline: string) => request<Story>('POST', '/api/stories', { title, logline }),
+  story: (id: string) => request<Story>('GET', `/api/stories/${id}`),
+  saveStory: (id: string, title: string, data: StoryData) =>
+    request<{ ok: true; updatedAt: number }>('PUT', `/api/stories/${id}`, { title, data }),
+  deleteStory: (id: string) => request('DELETE', `/api/stories/${id}`),
+
+  assist: <T>(kind: AssistKind, input: Record<string, unknown>) => request<T>('POST', `/api/assist/${kind}`, input),
+};
