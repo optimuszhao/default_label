@@ -13,7 +13,8 @@ export const VIDEO_RESOLUTIONS = [
   { value: '1080p', label: '1080P', short: 1080 },
 ] as const;
 
-export const VIDEO_DURATIONS = [3, 5, 8, 10] as const;
+// 与生成服务一致：视频时长 4–15 秒
+export const VIDEO_DURATIONS = [4, 5, 8, 10, 15] as const;
 
 export const CAMERA_MOTIONS = ['自动', '固定', '推镜', '拉镜', '左摇', '右摇', '上升', '下降', '环绕', '跟随'] as const;
 

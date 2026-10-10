@@ -23,6 +23,30 @@ npm run build
 npm start            # http://<IP>:8787
 ```
 
+## 对接朋友的 ComfyUI Web API
+
+在 `.env` 里：
+
+```bash
+PROVIDER=comfyweb
+GEN_API_BASE=http://114.132.237.136:1025
+COMFY_EMAIL=你在对方服务上注册的邮箱
+COMFY_PASSWORD=对应的密码
+```
+
+账号需要先在对方服务上注册（`/docs` 里的 send-code → register 两步，或请朋友帮忙开一个）。
+
+对方的接口没有语言模型，AI 写大纲 / 台词 / 分镜需要另外配置 `LLM_API_BASE` 和 `LLM_MODEL`（任何 OpenAI 兼容接口）。不配置也能用，只是这些按钮会提示“语言模型不可用”，内容需要手动写。
+
+几点差异，织影已自动处理：
+
+- 图生图只支持一张参考图，多张时取第一张；图生视频不支持尾帧，会忽略。
+- 视频时长限制 4–15 秒，宽高取 32 的倍数；运镜会拼到提示词末尾。
+- 一次只出一张图，要多张时织影会拆成多个任务。
+- 没有取消接口：在织影里取消后，对方那边仍会跑完，结果被忽略。
+
+第一次联调可以先跑 `npm run probe:comfy`（视频用 `npm run probe:comfy -- t2v`），它会打印对方每个接口的原始返回，方便排查。
+
 ## Docker 部署（NAS）
 
 镜像包含前后端，单容器、单端口运行。只需要映射两个目录：
@@ -109,9 +133,11 @@ npm start            # http://<IP>:8787
 | `PORT` | `8787` | 后端端口 |
 | `DATA_DIR` | `./data` | 数据库存放目录 |
 | `MEDIA_DIR` | `DATA_DIR/files` | 生成的图片、视频和上传素材存放目录 |
-| `PROVIDER` | `mock` | `mock` 用模拟服务，`http` 对接真实生成服务 |
+| `PROVIDER` | `mock` | `mock` 模拟服务；`comfyweb` 朋友的 ComfyUI Web API；`http` 按 `docs/API_CONTRACT.md` 实现的服务 |
 | `GEN_API_BASE` | 空 | 生成服务地址，例如 `http://192.168.1.50:9000` |
-| `GEN_API_KEY` | 空 | 生成服务鉴权密钥（可选） |
+| `GEN_API_KEY` | 空 | 生成服务鉴权密钥（`http` 模式，可选） |
+| `COMFY_EMAIL` / `COMFY_PASSWORD` | 空 | `comfyweb` 模式的登录账号，织影会自动登录并在 token 过期时重新登录 |
+| `LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` | 空 | AI 写作助手用的语言模型，任何 OpenAI 兼容接口；不配置时 AI 助手不可用 |
 | `MOCK_FLAKY` | 空 | 设为 `1` 时模拟服务会随机不可用，用来演示队列的等待与重试 |
 | `MAX_RUNNING` | `1` | 同时提交给生成服务的任务数 |
 | `MAX_ATTEMPTS` | `3` | 单任务最多失败次数 |

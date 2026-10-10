@@ -25,10 +25,17 @@ services:
       - ${WEAVE_MEDIA_DIR:-./media}:/media
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      # mock：内置模拟服务；http：对接 ComfyUI 侧的生成接口（协议见 docs/API_CONTRACT.md）
+      # mock：内置模拟服务；comfyweb：朋友的 ComfyUI Web API；http：按 docs/API_CONTRACT.md 实现的服务
       PROVIDER: ${PROVIDER:-mock}
       GEN_API_BASE: ${GEN_API_BASE:-}
       GEN_API_KEY: ${GEN_API_KEY:-}
+      # comfyweb 的登录账号（在对方服务上注册的邮箱和密码）
+      COMFY_EMAIL: ${COMFY_EMAIL:-}
+      COMFY_PASSWORD: ${COMFY_PASSWORD:-}
+      # AI 写作助手用的语言模型，任何 OpenAI 兼容接口
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       MAX_RUNNING: ${MAX_RUNNING:-1}
       # 通过 HTTPS 反向代理访问时设为 1
       COOKIE_SECURE: ${COOKIE_SECURE:-}
