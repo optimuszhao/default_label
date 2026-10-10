@@ -1,6 +1,6 @@
 {
   "name": "weave-studio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "织影 Weave —— AI 文生图 / 图生图 / 文生视频 / 图生视频 / 长篇故事创作工作台",
   "type": "module",
@@ -9,15 +9,20 @@
   },
   "scripts": {
     "dev": "concurrently -k -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:server": "tsx watch --clear-screen=false --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/index.ts",
+    "dev:server": "node --disable-warning=ExperimentalWarning --watch-path=server --watch-path=shared --env-file-if-exists=.env server/index.ts",
     "dev:web": "vite",
     "build": "vite build",
-    "start": "NODE_ENV=production tsx --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/index.ts",
+    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/index.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json",
-    "probe:comfy": "tsx --env-file-if-exists=.env scripts/probe-comfyweb.ts",
-    "test": "node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=1 'test/**/*.test.ts'",
-    "fake:operator": "tsx scripts/fake-operator.ts",
-    "test:e2e": "playwright test"
+    "probe:comfy": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/probe-comfyweb.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 'test/**/*.test.ts'",
+    "fake:operator": "node --disable-warning=ExperimentalWarning scripts/fake-operator.ts",
+    "test:e2e": "playwright test",
+    "restore": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/restore.ts",
+    "db": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/db.ts",
+    "selfcheck": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/selfcheck.ts",
+    "verify": "node --disable-warning=ExperimentalWarning scripts/verify.ts",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",
@@ -25,7 +30,7 @@
     "@fastify/static": "^10.1.6",
     "bcryptjs": "^3.0.3",
     "fastify": "^5.12.5",
-    "tsx": "^4.23.15",
+    "pino": "10.4.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

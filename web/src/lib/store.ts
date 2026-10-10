@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { DEFAULT_CAPABILITIES, type Capabilities } from '../../../shared/operator.ts';
 import type { Asset, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
-import { api } from './api.ts';
+import { api, ApiError } from './api.ts';
 
 export interface ComposerDraft {
   mode: 'image' | 'video';
@@ -135,5 +135,8 @@ export async function bootstrapSession(): Promise<void> {
 
 /** 统一的错误提示 */
 export function reportError(error: unknown): void {
-  useStore.getState().toast(error instanceof Error ? error.message : String(error), 'error');
+  let text = error instanceof Error ? error.message : String(error);
+  // 服务端出错时附上错误编号，反馈问题时报这个编号即可定位日志
+  if (error instanceof ApiError && error.status >= 500 && error.requestId) text += `（错误编号 ${error.requestId}）`;
+  useStore.getState().toast(text, 'error');
 }

@@ -22,6 +22,7 @@ import { pipeline } from 'node:stream/promises';
 import { DEFAULT_CAPABILITIES, IMAGE_RESOLUTIONS, type Capabilities } from '../../shared/operator.ts';
 import type { TokenStatus } from '../../shared/types.ts';
 import { newTempFile } from '../files.ts';
+import { logger } from '../log.ts';
 import { config } from '../config.ts';
 import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
 import {
@@ -99,7 +100,7 @@ function base(): string {
 function warnOnce(key: string, message: string, data: unknown): void {
   if (warned.has(key)) return;
   warned.add(key);
-  console.warn(`[comfyweb] ${message}:`, JSON.stringify(data).slice(0, 2000));
+  logger.warn({ operator: 'comfyweb', raw: JSON.stringify(data).slice(0, 2000) }, message);
 }
 
 function credentials(): Json {
@@ -413,7 +414,7 @@ async function download(file: OutputFile): Promise<ProviderOutput> {
     await fs.rm(temp, { force: true });
     throw new Error(`生成服务返回了空文件：${path.basename(file.name)}`);
   }
-  console.info(`[comfyweb] 已下载 ${path.basename(file.name)} ${(bytes / 1024 / 1024).toFixed(1)} MB sha256=${hash.digest('hex').slice(0, 16)}`);
+  logger.info({ operator: 'comfyweb', file: path.basename(file.name), bytes, sha256: hash.digest('hex').slice(0, 16) }, '已下载产物');
   return { kind, mime, filePath: temp };
 }
 

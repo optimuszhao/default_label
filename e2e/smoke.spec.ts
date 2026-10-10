@@ -98,3 +98,35 @@ test('断网时的修改：关掉页面再打开，会从本地重放并保存',
   const saved = await (await reopened.request.get(`/api/stories/${story.id}`)).json();
   expect(saved.title).toBe('离线时改的标题');
 });
+
+test('每个页面都能打开，没有控制台报错，并留存截图', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`${page.url()} ${message.text()}`);
+  });
+  page.on('pageerror', (error) => errors.push(`${page.url()} ${error.message}`));
+
+  await page.goto('/');
+  await page.screenshot({ path: testInfo.outputPath('landing.png') });
+  await page.goto('/login');
+  await page.screenshot({ path: testInfo.outputPath('login.png') });
+
+  await register(page);
+  const story = await (await page.request.post('/api/stories', { data: { title: '截图', logline: '' } })).json();
+  const pages: [string, string][] = [
+    ['create', '/studio/create'],
+    ['stories', '/studio/stories'],
+    ['story-editor', `/studio/stories/${story.id}`],
+    ['queue', '/studio/queue'],
+    ['assets', '/studio/assets'],
+    ['settings', '/studio/settings'],
+  ];
+  for (const [name, url] of pages) {
+    await page.goto(url);
+    // 页面有 SSE 长连接，网络不会空闲；等加载完成再稍等渲染
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: testInfo.outputPath(`${name}.png`), fullPage: true });
+  }
+  expect(errors).toEqual([]);
+});

@@ -119,6 +119,27 @@ MAX_RUNNING=2
 - **注意**：数据库目录要放在 NAS 本机磁盘上，不要指向 SMB/NFS 网络共享（SQLite 在网络文件系统上可能损坏）。`/media` 不受此限制。
 - 模拟服务的演示视频需要 ffmpeg，构建时加 `--build-arg WITH_FFMPEG=1`；接真实生成服务后不需要。
 
+## 运维：备份、恢复、迁移、自检
+
+- **每日备份**：每天 `BACKUP_AT`（默认 03:30）把数据库备份到 `/data/backups/weave-日期-时间.db.gz`，校验完整性后只保留最近 7 份。超级管理员也可以调用 `POST /api/admin/backups` 立即备份。生成的图片视频在 `/media`，体积大，建议用群晖的 Btrfs 快照或 Hyper Backup 备份这个目录。
+- **恢复**：
+  ```bash
+  docker compose stop weave
+  docker compose run --rm weave node scripts/restore.ts            # 列出备份
+  docker compose run --rm weave node scripts/restore.ts weave-20261009-033000.db.gz
+  docker compose start weave
+  ```
+  当前数据库不会被删除，会改名为 `weave.db.before-restore-时间`。
+- **升级与迁移**：新版本启动时自动执行数据库迁移，执行前会在 `/data/backups/pre-migrate-*.db` 留一份备份。`docker compose run --rm weave node scripts/db.ts status` 可以查看迁移状态。如果新版本做了不兼容旧版本的改动，旧镜像会拒绝启动并说明原因，回退前需要先恢复升级前的备份。
+- **自检**：`docker compose exec weave node scripts/selfcheck.ts --generate` 输出一份 Markdown 报告（CPU、内存、磁盘、备份、到算子的延迟、令牌换取、实际出一张小图），遇到问题时把报告发给开发者。
+- **探针**：`/healthz`（进程存活）、`/readyz`（数据库可用，Docker 健康检查用这个）、`/api/version`（版本号）。
+- **日志**：`docker logs weave` 输出 JSON，每个请求有编号。页面上的服务器错误提示会带“错误编号”，按编号搜日志即可定位。
+
+## 开发检查
+
+- `npm run verify`：类型检查、接口测试、构建、浏览器冒烟（桌面和手机两个视口，逐页截图并检查控制台报错）、生产依赖漏洞检查。GitHub Actions 每次推送都会跑。
+- 推送前会自动跑 `npm run verify -- --quick`（`npm install` 时自动启用 `.githooks/pre-push`）。
+
 ## 功能
 
 | 模块 | 说明 |
@@ -163,7 +184,9 @@ MAX_RUNNING=2
 | `COOKIE_SECURE` | 空 | 通过 HTTPS 访问时设为 `1` |
 | `ADMIN_EMAILS` | 空 | 超级管理员邮箱，逗号分隔。管理员在设置页能看到算子令牌状态，可以立即校验或重新获取 |
 | `REGISTRATION` | `open` | 设为 `closed` 关闭注册（`ADMIN_EMAILS` 里的邮箱仍可注册），给朋友小范围使用时建议关闭 |
-| `LOG_LEVEL` | `warn` | 后端日志级别 |
+| `LOG_LEVEL` | `info` | 日志级别（JSON 格式，凭证字段自动打码） |
+| `BACKUP_AT` | `03:30` | 每天自动备份数据库的时间，留空关闭 |
+| `BACKUP_KEEP` | `7` | 保留的每日备份份数 |
 
 ## 技术选型
 

@@ -1,68 +1,37 @@
+// 入口：执行迁移（导入 db.ts 时）→ 组装应用 → 监听端口 → 启动调度器
 import fs from 'node:fs';
 import path from 'node:path';
-import Fastify from 'fastify';
-import cookie from '@fastify/cookie';
-import multipart from '@fastify/multipart';
-import fastifyStatic from '@fastify/static';
-import { purgeExpiredSessions, userFromRequest } from './auth.ts';
+import { buildApp } from './app.ts';
+import { purgeExpiredSessions } from './auth.ts';
+import { startBackups } from './backup.ts';
 import { config } from './config.ts';
 import { cleanTempDir } from './files.ts';
-import { registerRoutes } from './routes.ts';
+import { logger } from './log.ts';
 import { startScheduler } from './scheduler.ts';
 
-const app = Fastify({
-  logger: { level: process.env.LOG_LEVEL ?? 'warn' },
-  bodyLimit: 8 * 1024 * 1024,
-});
-
-await app.register(cookie);
-await app.register(multipart, { limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: 1 } });
-
-app.decorateRequest('user', null);
-app.addHook('onRequest', async (request) => {
-  request.user = userFromRequest(request);
-});
-
-// /api/files 用 sendFile 发送，root 在路由里传入
-await app.register(fastifyStatic, {
-  root: config.mediaDir,
-  serve: false,
-});
-
-await registerRoutes(app);
-
-// 生产模式下由同一个进程托管前端构建产物，单端口部署
-if (fs.existsSync(config.webDist)) {
-  await app.register(fastifyStatic, {
-    root: config.webDist,
-    prefix: '/',
-    decorateReply: false,
-    wildcard: false,
-    setHeaders(res, filePath) {
-      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-        res.header('cache-control', 'public, max-age=31536000, immutable');
-      }
-    },
-  });
-  const indexHtml = fs.readFileSync(path.join(config.webDist, 'index.html'));
-  app.setNotFoundHandler((request, reply) => {
-    if (request.url.startsWith('/api/')) return reply.code(404).send({ error: 'Not Found' });
-    return reply.type('text/html').header('cache-control', 'no-cache').send(indexHtml);
-  });
-}
+const app = await buildApp();
 
 await cleanTempDir();
 const stopScheduler = startScheduler();
+const stopBackups = startBackups();
 purgeExpiredSessions();
 setInterval(purgeExpiredSessions, 6 * 3600 * 1000).unref();
 
 await app.listen({ port: config.port, host: config.host });
-console.log(`[weave] server ready on http://localhost:${config.port}  provider=${config.provider}`);
+
+// 心跳文件：scripts/restore.ts 据此判断服务是否还在运行（跨容器也有效）
+const heartbeat = path.join(config.dataDir, '.running');
+const beat = () => fs.writeFileSync(heartbeat, JSON.stringify({ pid: process.pid, version: config.appVersion, at: Date.now() }));
+beat();
+setInterval(beat, 30_000).unref();
+logger.info({ port: config.port, provider: config.provider, version: config.appVersion }, `织影已启动 http://localhost:${config.port}`);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
     stopScheduler();
+    stopBackups();
     await app.close();
+    fs.rmSync(heartbeat, { force: true });
     process.exit(0);
   });
 }

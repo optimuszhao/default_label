@@ -23,7 +23,10 @@ export async function freePort(): Promise<number> {
 
 export class Client {
   cookie = '';
-  constructor(readonly base: string) {}
+  readonly base: string;
+  constructor(base: string) {
+    this.base = base;
+  }
 
   async raw(method: string, pathname: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
     const init: RequestInit = { method, headers: { ...headers } };
@@ -65,7 +68,7 @@ export interface Harness {
   /** 注册并登录一个新用户，默认开启自动调度 */
   user(email?: string, options?: { autoDispatch?: boolean }): Promise<Client>;
   logs(): string;
-  stop(): Promise<void>;
+  stop(options?: { keepData?: boolean }): Promise<void>;
 }
 
 let userSeq = 0;
@@ -75,12 +78,12 @@ export async function startHarness(env: Record<string, string> = {}): Promise<Ha
   const fake: Server = await startFakeOperator(operatorPort);
   const operator = `http://127.0.0.1:${operatorPort}`;
   const port = await freePort();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weave-test-'));
+  const dataDir = env.DATA_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'weave-test-'));
   let output = '';
 
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--disable-warning=ExperimentalWarning', '--import', 'tsx', 'server/index.ts'],
+    ['--disable-warning=ExperimentalWarning', 'server/index.ts'],
     {
       cwd: ROOT,
       env: {
@@ -144,11 +147,11 @@ export async function startHarness(env: Record<string, string> = {}): Promise<Ha
       return client;
     },
     logs: () => output,
-    async stop() {
+    async stop(options = {}) {
       child.kill('SIGTERM');
       await new Promise((resolve) => (child.exitCode !== null ? resolve(null) : child.once('exit', resolve)));
       await new Promise((resolve) => fake.close(resolve));
-      fs.rmSync(dataDir, { recursive: true, force: true });
+      if (!options.keepData) fs.rmSync(dataDir, { recursive: true, force: true });
     },
   };
 }

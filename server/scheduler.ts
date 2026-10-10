@@ -12,6 +12,7 @@ import { config } from './config.ts';
 import { db, now, type Row } from './db.ts';
 import { absoluteFile, deleteAssetFile, saveAsset } from './files.ts';
 import { getHealth, markUnavailable, provider, ProviderUnavailableError, type ProviderImageInput, type ProviderOutput } from './providers/index.ts';
+import { logger } from './log.ts';
 import { getAssetRow, getTask, toAsset, toTask } from './repo.ts';
 
 function emitTask(id: string): void {
@@ -251,7 +252,7 @@ function pollRunning(): void {
     inflight.add(task.id);
     const runSeed = row.run_seed == null ? null : Number(row.run_seed);
     void pollTask(task, jobId, runSeed)
-      .catch((error) => console.error('[scheduler] poll failed', error))
+      .catch((error) => logger.error({ err: error, taskId: task.id }, '查询任务进度失败'))
       .finally(() => inflight.delete(task.id));
   }
 }
@@ -344,7 +345,7 @@ async function tick(): Promise<void> {
     pollRunning();
     await dispatch();
   } catch (error) {
-    console.error('[scheduler] tick failed', error);
+    logger.error({ err: error }, '调度节拍失败');
   } finally {
     ticking = false;
     if (pendingKick) {

@@ -1,0 +1,3 @@
+#!/bin/sh
+# 推送前跑快速检查（类型 + 接口测试）。紧急情况可以 git push --no-verify 跳过。
+exec npm run -s verify -- --quick

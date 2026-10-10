@@ -1,0 +1,8 @@
+# 只接收安全更新（open-pull-requests-limit: 0 关闭常规版本升级 PR）
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

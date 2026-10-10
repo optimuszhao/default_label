@@ -29,7 +29,12 @@ RUN if [ "$WITH_FFMPEG" = "1" ]; then \
       apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; \
     fi
 
+# 构建时注入版本信息：docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
+ARG APP_VERSION=
+ARG GIT_SHA=
 ENV NODE_ENV=production \
+    APP_VERSION=${APP_VERSION} \
+    GIT_SHA=${GIT_SHA} \
     PORT=8787 \
     DATA_DIR=/data \
     MEDIA_DIR=/media \
@@ -41,6 +46,8 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY shared ./shared
 COPY server ./server
+# 运维脚本：自检、数据库迁移、备份恢复
+COPY scripts/selfcheck.ts scripts/db.ts scripts/restore.ts ./scripts/
 
 RUN mkdir -p /data /media && chown -R node:node /data /media
 USER node
@@ -49,6 +56,6 @@ EXPOSE 8787
 VOLUME ["/data", "/media"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/auth/me').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node_modules/.bin/tsx", "--disable-warning=ExperimentalWarning", "server/index.ts"]
+CMD ["node", "--disable-warning=ExperimentalWarning", "server/index.ts"]

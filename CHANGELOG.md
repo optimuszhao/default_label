@@ -1,5 +1,26 @@
 # 更新记录
 
+## v0.3.0 · M0b 工程地基
+
+### 新增
+- **数据库迁移框架**：版本化迁移（`schema_migrations`），执行前自动备份，每个迁移一个事务；不兼容旧版本的迁移会让旧镜像拒绝启动并给出中文说明。`node scripts/db.ts status | dry-run | migrate`。
+- **每日备份**：每天 03:30 备份数据库（完整性检查 + gzip，保留 7 份）；`scripts/restore.ts` 一条命令恢复，恢复前保留当前库。
+- **自检脚本** `scripts/selfcheck.ts`：运行环境、磁盘、备份、算子延迟、令牌换取、实际出图，输出 Markdown 报告。
+- **探针**：`/healthz`、`/readyz`、`/api/version`；Docker 健康检查改用 `/readyz`。
+- **结构化日志**：pino JSON 日志，cookie、authorization、password、secret、token、apiKey 自动打码；每个请求有编号，服务器错误的提示里带“错误编号”。
+- **配置校验**：环境变量写错时拒绝启动并用中文指出哪一项有问题。
+- **CI**：`npm run verify`（类型检查、接口测试、构建、浏览器冒烟、依赖漏洞），GitHub Actions 和 pre-push 钩子；浏览器冒烟增加逐页截图和控制台报错检查。
+
+### 改进
+- 直接用 Node 运行 TypeScript，去掉 tsx 运行时依赖。
+- SQLite：`synchronous=NORMAL`、`busy_timeout`，补充索引；故事列表的封面改为一次查询。
+- 后端路由按领域拆分（auth / tasks / assets / stories / assist / admin / system）。
+- `MAX_RUNNING` 默认值统一为 2。
+
+### 升级说明
+- 第一次启动 v0.3.0 会执行迁移 0001、0002（只加表和索引，旧版本仍可使用这个库），迁移前的备份在 `/data/backups/`。
+- 构建时可以加 `--build-arg GIT_SHA=$(git rev-parse --short HEAD)`，版本号会显示在 `/api/version` 和自检报告里。
+
 ## v0.2.0 · M0a 缺陷止血
 
 对应 `docs/ROADMAP.md` 里程碑 M0a。

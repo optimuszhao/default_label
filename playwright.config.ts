@@ -19,7 +19,7 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 7'], viewport: { width: 375, height: 812 } } },
   ],
   webServer: {
-    command: 'npm run build && node --disable-warning=ExperimentalWarning --import tsx e2e/serve.ts',
+    command: 'npm run build && node --disable-warning=ExperimentalWarning e2e/serve.ts',
     url: `http://127.0.0.1:${PORT}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

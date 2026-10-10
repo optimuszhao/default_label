@@ -21,9 +21,12 @@ import type { Capabilities } from '../../../shared/operator.ts';
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** 服务端的请求编号，用户反馈问题时提供，方便按编号查日志 */
+  requestId: string | null;
+  constructor(status: number, message: string, requestId: string | null = null) {
     super(message);
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -36,9 +39,18 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
   });
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // 反向代理返回的 502 / 504 页面不是 JSON
+  }
   if (!response.ok) {
-    throw new ApiError(response.status, (data && data.error) || `请求失败（${response.status}）`);
+    throw new ApiError(
+      response.status,
+      (data && data.error) || `请求失败（${response.status}）`,
+      (data && data.requestId) || response.headers.get('x-request-id'),
+    );
   }
   return data as T;
 }
