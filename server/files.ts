@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { Asset, MediaKind } from '../shared/types.ts';
+import { randomBytes } from 'node:crypto';
+import type { Asset, GenInfo, MediaKind } from '../shared/types.ts';
 import { config } from './config.ts';
 import { db, newId, now, type Row } from './db.ts';
+import { probeMedia } from './media-probe.ts';
 import { toAsset } from './repo.ts';
 
 const EXT: Record<string, string> = {
@@ -39,12 +41,29 @@ export function absoluteFile(file: string): string {
   return path.join(filesDir(), file);
 }
 
+/** 下载中的临时文件放在媒体目录下，和正式文件同一个磁盘，完成后原子 rename */
+export function tempDir(): string {
+  return path.join(filesDir(), '.tmp');
+}
+
+export async function newTempFile(ext = 'partial'): Promise<string> {
+  await fs.mkdir(tempDir(), { recursive: true });
+  return path.join(tempDir(), `${Date.now()}-${randomBytes(6).toString('hex')}.${ext}`);
+}
+
+/** 启动时清理上次异常退出留下的临时文件 */
+export async function cleanTempDir(): Promise<void> {
+  await fs.rm(tempDir(), { recursive: true, force: true });
+}
+
 export interface SaveAssetInput {
   userId: string;
   kind: MediaKind;
   source: Asset['source'];
   mime: string;
-  data: Buffer;
+  /** 二选一：内存数据，或一个本地临时文件（会被移动过去） */
+  data?: Buffer;
+  filePath?: string;
   width?: number | null;
   height?: number | null;
   prompt?: string | null;
@@ -52,33 +71,53 @@ export interface SaveAssetInput {
   storyId?: string | null;
   shotId?: string | null;
   purpose?: Asset['purpose'];
+  gen?: GenInfo | null;
 }
 
 export async function saveAsset(input: SaveAssetInput): Promise<Asset> {
   const id = newId('a_');
   const ext = EXT[input.mime] ?? 'bin';
   const file = relativePath(input.userId, id, input.kind, input.source, ext);
-  await fs.mkdir(path.dirname(absoluteFile(file)), { recursive: true });
-  await fs.writeFile(absoluteFile(file), input.data);
-  db.prepare(
-    `INSERT INTO assets (id, user_id, kind, source, mime, file, width, height, prompt, task_id, story_id, shot_id, purpose, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    input.userId,
-    input.kind,
-    input.source,
-    input.mime,
-    file,
-    input.width ?? null,
-    input.height ?? null,
-    input.prompt ?? null,
-    input.taskId ?? null,
-    input.storyId ?? null,
-    input.shotId ?? null,
-    input.purpose ?? null,
-    now(),
-  );
+  const target = absoluteFile(file);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  if (input.filePath) {
+    await fs.rename(input.filePath, target);
+  } else if (input.data) {
+    await fs.writeFile(target, input.data);
+  } else {
+    throw new Error('saveAsset 缺少文件内容');
+  }
+  // 以文件头里的真实尺寸为准（例如超分后的视频比提交时大一倍）
+  const probed = await probeMedia(target);
+  const width = probed.width ?? input.width ?? null;
+  const height = probed.height ?? input.height ?? null;
+  const gen = input.gen ? { ...input.gen, width, height, ...(probed.duration ? { duration: probed.duration } : {}) } : null;
+  try {
+    db.prepare(
+      `INSERT INTO assets (id, user_id, kind, source, mime, file, width, height, duration, prompt, task_id, story_id, shot_id, purpose, gen, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      input.userId,
+      input.kind,
+      input.source,
+      input.mime,
+      file,
+      width,
+      height,
+      probed.duration ?? null,
+      input.prompt ?? null,
+      input.taskId ?? null,
+      input.storyId ?? null,
+      input.shotId ?? null,
+      input.purpose ?? null,
+      gen ? JSON.stringify(gen) : null,
+      now(),
+    );
+  } catch (error) {
+    await fs.rm(target, { force: true });
+    throw error;
+  }
   return toAsset(db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as Row);
 }
 

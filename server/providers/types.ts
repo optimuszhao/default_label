@@ -22,9 +22,12 @@ export interface SubmitInput {
 export interface ProviderOutput {
   kind: 'image' | 'video';
   mime: string;
-  /** 二选一：远程地址（会被下载到本地）或 base64 内容 */
+  /** 三选一：本地临时文件（推荐，大文件不进内存）、远程地址（会被下载到本地）或 base64 内容 */
+  filePath?: string;
   url?: string;
   base64?: string;
+  /** 这个产物实际使用的种子 */
+  seed?: number;
   width?: number;
   height?: number;
 }

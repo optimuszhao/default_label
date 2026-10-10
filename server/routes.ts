@@ -210,7 +210,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { user: request.user, settings: getUserSettings(request.user.id) };
   });
 
-  app.get('/api/health', async () => getHealth());
+  // 未登录只返回各能力是否可用，不暴露算子的报错细节
+  app.get('/api/health', async (request) => {
+    const health = await getHealth();
+    if (request.user) return health;
+    return { provider: health.provider, image: health.image, video: health.video, llm: health.llm, checkedAt: health.checkedAt };
+  });
 
   // ---- 以下接口需要登录 ----
   app.register(async (api) => {

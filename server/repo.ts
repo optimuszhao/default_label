@@ -38,6 +38,8 @@ export function toAsset(row: Row): Asset {
     storyId: (row.story_id as string | null) ?? null,
     shotId: (row.shot_id as string | null) ?? null,
     purpose: (row.purpose as Asset['purpose']) ?? null,
+    duration: row.duration == null ? null : Number(row.duration),
+    gen: parseJson<Asset['gen']>(row.gen, null),
     favorite: Number(row.favorite) === 1,
     createdAt: Number(row.created_at),
   };

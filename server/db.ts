@@ -97,6 +97,10 @@ function addColumn(table: string, column: string, definition: string): void {
   if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 addColumn('tasks', 'stage', 'TEXT');
+/** 本次运行实际提交的种子（用户没指定时由服务端随机生成） */
+addColumn('tasks', 'run_seed', 'INTEGER');
+addColumn('assets', 'gen', 'TEXT');
+addColumn('assets', 'duration', 'REAL');
 
 export function newId(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url');

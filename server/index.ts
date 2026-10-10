@@ -6,6 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { purgeExpiredSessions, userFromRequest } from './auth.ts';
 import { config } from './config.ts';
+import { cleanTempDir } from './files.ts';
 import { registerRoutes } from './routes.ts';
 import { startScheduler } from './scheduler.ts';
 
@@ -50,6 +51,7 @@ if (fs.existsSync(config.webDist)) {
   });
 }
 
+await cleanTempDir();
 const stopScheduler = startScheduler();
 purgeExpiredSessions();
 setInterval(purgeExpiredSessions, 6 * 3600 * 1000).unref();

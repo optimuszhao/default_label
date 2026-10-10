@@ -28,6 +28,10 @@ interface Scenario {
   postprocessingMs: number;
   /** 下载产物前等待的时间 */
   downloadDelayMs: number;
+  /** 只对视频产物生效的下载等待 */
+  videoDownloadDelayMs: number;
+  /** 设置后，结果里的文件改为这个前缀开头的绝对地址（模拟产物放在别的主机上） */
+  resultBase: string;
   /** 视频产物大小（MB） */
   videoSizeMb: number;
   /** 提交接口先收下任务，再拖这么久才返回（模拟提交超时但实际已收下） */
@@ -43,6 +47,8 @@ const DEFAULT: Scenario = {
   runningMs: 600,
   postprocessingMs: 300,
   downloadDelayMs: 0,
+  videoDownloadDelayMs: 0,
+  resultBase: '',
   videoSizeMb: 1,
   submitDelayMs: 0,
 };
@@ -153,6 +159,13 @@ function taskJson(task: FakeTask) {
           upscaled: task.outcome === 'no-upscale' ? [] : [`api_upscale_${task.id}.mp4`],
         }
       : { category: 'image', files: [`api_image_${task.id}.png`] };
+    if (scenario.resultBase) {
+      const category = result.category as string;
+      for (const key of ['files', 'upscaled']) {
+        const list = result[key] as string[] | undefined;
+        if (list) result[key] = list.map((name) => `${scenario.resultBase}/api/products/download/${category}/${name}`);
+      }
+    }
   }
   return {
     type: task.type,
@@ -301,7 +314,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const id = /(fake-\d+)/.exec(filename)?.[1];
     const task = id ? tasks.get(id) : undefined;
     if (!task || task.outcome === 'missing-file') return send(res, 404, { detail: '文件不存在' });
-    if (scenario.downloadDelayMs) await new Promise((resolve) => setTimeout(resolve, scenario.downloadDelayMs));
+    const delay = scenario.downloadDelayMs + (download[1] === 'video' ? scenario.videoDownloadDelayMs : 0);
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     const width = Number(task.params.width) || 1024;
     const height = Number(task.params.height) || 1024;
     if (download[1] === 'image') {

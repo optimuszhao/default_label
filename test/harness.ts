@@ -56,6 +56,8 @@ export interface Harness {
   base: string;
   operator: string;
   dataDir: string;
+  /** 织影服务进程号（读 /proc 看内存） */
+  pid: number;
   /** 修改假算子场景 */
   scenario(patch: Record<string, unknown>): Promise<void>;
   /** 假算子收到的生成请求 */
@@ -124,6 +126,7 @@ export async function startHarness(env: Record<string, string> = {}): Promise<Ha
     base,
     operator,
     dataDir,
+    pid: child.pid!,
     async scenario(patch) {
       await fetch(`${operator}/__control`, { method: 'POST', body: JSON.stringify(patch) });
     },
@@ -137,7 +140,7 @@ export async function startHarness(env: Record<string, string> = {}): Promise<Ha
         password: 'password123',
         name: '测试',
       });
-      if (options.autoDispatch !== false) await client.patch('/api/settings', { autoDispatch: true, pollIntervalSec: 5 });
+      await client.patch('/api/settings', { autoDispatch: options.autoDispatch !== false, pollIntervalSec: 5 });
       return client;
     },
     logs: () => output,

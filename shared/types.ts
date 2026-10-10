@@ -115,7 +115,23 @@ export interface Asset {
   shotId: string | null;
   purpose: 'keyframe' | 'video' | null;
   favorite: boolean;
+  /** 视频时长（秒），从文件头读出 */
+  duration: number | null;
+  /** 生成配方：实际使用的种子和参数，用于复现 */
+  gen: GenInfo | null;
   createdAt: number;
+}
+
+export interface GenInfo {
+  type: TaskType;
+  /** 实际提交给算子的种子 */
+  seed: number | null;
+  width: number | null;
+  height: number | null;
+  duration?: number | null;
+  steps?: number | null;
+  negativePrompt?: string;
+  operator: string;
 }
 
 export interface ProviderHealth {

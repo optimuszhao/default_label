@@ -13,8 +13,13 @@
 //
 // 对方可以同时接收多个任务，在 ComfyUI 内部排队；视频含超分单条约 15–30 分钟。
 // 遇到认不出的响应会把原文打到日志里（npm run probe:comfy 可以直接看原始返回）。
+import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { newTempFile } from '../files.ts';
 import { config } from '../config.ts';
 import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
 import {
@@ -283,18 +288,64 @@ function downloadPath(file: string, category: 'image' | 'video'): string {
   return `/api/products/download/${category}/${encodeURIComponent(path.basename(file))}`;
 }
 
+/** 只有和算子同源的地址才带 token，防止凭证被发到别的主机 */
+function sameOrigin(url: string): boolean {
+  try {
+    return new URL(url).origin === new URL(base()).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** 流式写入临时文件并计算 sha256，不把整段视频读进内存 */
 async function download(file: OutputFile): Promise<ProviderOutput> {
   const kind = kindOf(file.name, file.category);
   const target = downloadPath(file.name, file.category);
   // 超分后的视频可能有几十 MB，给足下载时间
-  const response = /^https?:\/\//i.test(target)
-    ? await fetch(target, { headers: { authorization: `Bearer ${await ensureToken()}` }, signal: AbortSignal.timeout(600_000) })
-    : await call('GET', target, undefined, false, 600_000);
+  let response: Response;
+  if (/^https?:\/\//i.test(target)) {
+    const headers: Record<string, string> = sameOrigin(target) ? { authorization: `Bearer ${await ensureToken()}` } : {};
+    try {
+      response = await fetch(target, { headers, signal: AbortSignal.timeout(600_000) });
+    } catch (error) {
+      throw new ProviderUnavailableError(`下载生成结果失败：${(error as Error).message}`);
+    }
+  } else {
+    response = await call('GET', target, undefined, false, 600_000);
+  }
   if (response.status === 404) throw new Error(`生成服务上找不到产物文件：${path.basename(file.name)}`);
-  if (!response.ok) throw new ProviderUnavailableError(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file.name)}`);
+  if (!response.ok || !response.body) {
+    throw new ProviderUnavailableError(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file.name)}`);
+  }
   const ext = path.extname(file.name.split('?')[0]).slice(1).toLowerCase();
   const mime = MIME_BY_EXT[ext] ?? response.headers.get('content-type')?.split(';')[0] ?? (kind === 'video' ? 'video/mp4' : 'image/png');
-  return { kind, mime, base64: Buffer.from(await response.arrayBuffer()).toString('base64') };
+  const temp = await newTempFile();
+  const hash = createHash('sha256');
+  let bytes = 0;
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      hash.update(chunk);
+      bytes += chunk.length;
+      callback(null, chunk);
+    },
+  });
+  try {
+    await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(temp));
+  } catch (error) {
+    await fs.rm(temp, { force: true });
+    throw new ProviderUnavailableError(`下载生成结果中断：${(error as Error).message}`);
+  }
+  const expected = Number(response.headers.get('content-length'));
+  if (expected && bytes !== expected) {
+    await fs.rm(temp, { force: true });
+    throw new ProviderUnavailableError(`下载生成结果不完整（${bytes}/${expected} 字节）`);
+  }
+  if (!bytes) {
+    await fs.rm(temp, { force: true });
+    throw new Error(`生成服务返回了空文件：${path.basename(file.name)}`);
+  }
+  console.info(`[comfyweb] 已下载 ${path.basename(file.name)} ${(bytes / 1024 / 1024).toFixed(1)} MB sha256=${hash.digest('hex').slice(0, 16)}`);
+  return { kind, mime, filePath: temp };
 }
 
 function progressOf(data: Json): number | undefined {
@@ -400,7 +451,12 @@ export class ComfyWebProvider implements Provider {
     try {
       const response = await fetch(`${base()}/health`, { signal: AbortSignal.timeout(5_000) });
       reachable = response.ok;
-      if (!response.ok) message = `生成服务健康检查失败（HTTP ${response.status}）`;
+      let verifyEvery = VERIFY_EVERY_MS;
+      if (response.status === 404) {
+        // 对方没有 /health：改用 verify 判断是否在线，校验频率提高到 30 秒一次
+        reachable = true;
+        verifyEvery = 30_000;
+      } else if (!response.ok) message = `生成服务健康检查失败（HTTP ${response.status}）`;
       else {
         const data = (await response.json().catch(() => ({}))) as Json;
         // 常见写法：{status: "ok"} / {comfyui: false}；明确说不可用时才判为不可用
@@ -414,7 +470,7 @@ export class ComfyWebProvider implements Provider {
         }
       }
       // 服务在线时顺便确认凭证可用（每 5 分钟一次）：密钥配错时在设置页直接看到原因
-      if (reachable && Date.now() - verifiedAt > VERIFY_EVERY_MS) {
+      if (reachable && Date.now() - verifiedAt > verifyEvery) {
         const verify = await call('GET', '/api/auth/verify', undefined, true, 10_000);
         const data = (await verify.json().catch(() => ({}))) as Json;
         if (!verify.ok || data.valid === false) {
@@ -458,7 +514,12 @@ export class ComfyWebProvider implements Provider {
       const files = jobs.flatMap((job) => job.files);
       if (!files.length) return { state: 'failed', error: '任务完成但没有找到产物文件（详见服务日志）' };
       const outputs: ProviderOutput[] = [];
-      for (const file of files) outputs.push(await download(file));
+      try {
+        for (const file of files) outputs.push(await download(file));
+      } catch (error) {
+        await Promise.all(outputs.map((output) => output.filePath && fs.rm(output.filePath, { force: true })));
+        throw error;
+      }
       return { state: 'succeeded', progress: 1, outputs };
     }
     const progress = jobs.reduce((sum, job) => sum + job.progress, 0) / jobs.length;
