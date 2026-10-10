@@ -51,9 +51,9 @@ export default function Settings() {
           {health ? ` · ${timeAgo(health.checkedAt)}检查` : ''}
         </p>
         <p className="text-sm leading-relaxed text-fg-3">
-          生成服务地址在服务端通过环境变量 <code className="rounded bg-white/5 px-1 font-mono text-fg-2">PROVIDER=http</code> 和{' '}
-          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">GEN_API_BASE</code> 配置，接口协议见仓库里的{' '}
-          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">docs/API_CONTRACT.md</code>。
+          生成服务和语言模型在服务端通过环境变量配置（<code className="rounded bg-white/5 px-1 font-mono text-fg-2">PROVIDER</code>、
+          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">GEN_API_BASE</code>、
+          <code className="rounded bg-white/5 px-1 font-mono text-fg-2">LLM_API_BASE</code> 等），说明见仓库 README。
         </p>
       </section>
 

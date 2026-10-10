@@ -1,10 +1,22 @@
 import type { ProviderHealth } from '../../shared/types.ts';
 import { config } from '../config.ts';
+import { ComfyWebProvider } from './comfyweb.ts';
 import { HttpProvider } from './http.ts';
 import { MockProvider } from './mock.ts';
 import type { Provider } from './types.ts';
 
-export const provider: Provider = config.provider === 'http' ? new HttpProvider() : new MockProvider();
+function createProvider(): Provider {
+  switch (config.provider) {
+    case 'http':
+      return new HttpProvider();
+    case 'comfyweb':
+      return new ComfyWebProvider();
+    default:
+      return new MockProvider();
+  }
+}
+
+export const provider: Provider = createProvider();
 
 let cached: ProviderHealth | null = null;
 let inflight: Promise<ProviderHealth> | null = null;

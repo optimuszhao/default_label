@@ -25,9 +25,22 @@ export const config = {
    * - mock：本地模拟，不需要 GPU，方便开发界面
    * - http：对接同事在 ComfyUI 上暴露的接口，协议见 docs/API_CONTRACT.md
    */
-  provider: (process.env.PROVIDER ?? 'mock') as 'mock' | 'http',
+  provider: (process.env.PROVIDER || 'mock') as 'mock' | 'http' | 'comfyweb',
   genApiBase: (process.env.GEN_API_BASE ?? '').replace(/\/+$/, ''),
   genApiKey: process.env.GEN_API_KEY ?? '',
+  /** PROVIDER=comfyweb：朋友的「ComfyUI Web API」账号，用于换取 JWT；也可直接给 COMFY_TOKEN */
+  comfyEmail: process.env.COMFY_EMAIL ?? '',
+  comfyPassword: process.env.COMFY_PASSWORD ?? '',
+  comfyToken: process.env.COMFY_TOKEN ?? '',
+
+  /**
+   * 语言模型（AI 写大纲 / 台词 / 分镜）。任何 OpenAI 兼容的 /v1/chat/completions 接口都可以，
+   * 例如 vLLM、Ollama、LM Studio、各家云 API。不配置时 AI 助手显示为不可用（mock 模式除外）。
+   */
+  llmApiBase: (process.env.LLM_API_BASE ?? '').replace(/\/+$/, ''),
+  llmApiKey: process.env.LLM_API_KEY ?? '',
+  llmModel: process.env.LLM_MODEL ?? '',
+
   /** mock 模式下模拟服务时好时坏 */
   mockFlaky: process.env.MOCK_FLAKY === '1',
 
