@@ -188,7 +188,10 @@ export class MockProvider implements Provider {
     if (job.canceled) return { state: 'failed', error: '已取消' };
     const elapsed = Date.now() - job.startedAt;
     if (elapsed < job.durationMs) {
-      return { state: 'running', progress: Math.min(0.95, elapsed / job.durationMs) };
+      const progress = Math.min(0.95, elapsed / job.durationMs);
+      const video = job.input.type.endsWith('v');
+      const stage = progress < 0.1 ? '在生成服务排队中' : video && progress > 0.8 ? '转码 / 超分中' : video ? '视频生成中' : '图片生成中';
+      return { state: 'running', progress, stage };
     }
     job.outputs ??= buildOutputs(job.input);
     const outputs = await job.outputs;

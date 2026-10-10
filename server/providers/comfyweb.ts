@@ -1,14 +1,17 @@
 // 对接朋友部署的「ComfyUI Web API」（FastAPI，/docs 可查看）。
 //
-//   登录        POST /api/auth/login            {email, password} → {token}
-//   文生图      POST /api/generate/text2img     JSON
+//   登录        POST /api/auth/login            {appid, secret} → {token, appid, user_id}，token 有效 72 小时
+//   校验        GET  /api/auth/verify           → {valid, appid, user_id}，失效时 401
+//   文生图      POST /api/generate/text2img     JSON，Qwen-Image，宽高 16 的倍数
 //   图生图      POST /api/generate/img2img      multipart，单张参考图
-//   文生视频    POST /api/generate/text2video   JSON，时长 4–15 秒，宽高 32 的倍数
+//   文生视频    POST /api/generate/text2video   JSON，时长 4–15 秒，宽高 32 的倍数，自动 2x 超分
 //   图生视频    POST /api/generate/img2video    multipart，首帧
-//   查询任务    GET  /api/tasks/{id}            status: pending/running/postprocessing/completed/failed
+//   提交响应    {task_id, message}
+//   查询任务    GET  /api/tasks/{task_id}       {status, stage, result:{category, files, upscaled}, error}
+//               status: pending → running → postprocessing（转码 / 超分）→ completed / failed
 //   下载产物    GET  /api/products/download/{video|image}/{filename}
 //
-// 接口文档没有写明「提交」和「查询」的响应字段，下面的解析尽量宽松；
+// 对方可以同时接收多个任务，在 ComfyUI 内部排队；视频含超分单条约 15–30 分钟。
 // 遇到认不出的响应会把原文打到日志里（npm run probe:comfy 可以直接看原始返回）。
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -38,7 +41,14 @@ const MIME_BY_EXT: Record<string, string> = {
   mov: 'video/quicktime',
 };
 
+/** 对方 token 有效期 72 小时，提前 1 小时主动换新，避免长视频任务中途过期 */
+const TOKEN_TTL_MS = 71 * 60 * 60 * 1000;
+/** 健康检查里校验 token 的间隔 */
+const VERIFY_EVERY_MS = 5 * 60 * 1000;
+
 let token = config.comfyToken;
+let tokenExpiresAt = token ? Number.POSITIVE_INFINITY : 0;
+let verifiedAt = 0;
 let loginInflight: Promise<string> | null = null;
 const warned = new Set<string>();
 
@@ -53,21 +63,22 @@ function warnOnce(key: string, message: string, data: unknown): void {
   console.warn(`[comfyweb] ${message}:`, JSON.stringify(data).slice(0, 2000));
 }
 
+function credentials(): Json {
+  if (config.comfyAppId && config.comfySecret) return { appid: config.comfyAppId, secret: config.comfySecret };
+  // 旧版接口用邮箱账号登录，保留兼容
+  if (config.comfyEmail && config.comfyPassword) return { email: config.comfyEmail, password: config.comfyPassword };
+  throw new ProviderUnavailableError('尚未配置 COMFY_APPID / COMFY_SECRET（生成服务的 API ID 和密钥）');
+}
+
 async function login(): Promise<string> {
-  const useAppId = Boolean(config.comfyAppId && config.comfySecret);
-  if (!useAppId && (!config.comfyEmail || !config.comfyPassword)) {
-    throw new ProviderUnavailableError('尚未配置 COMFY_APPID / COMFY_SECRET 或 COMFY_EMAIL / COMFY_PASSWORD（生成服务账号）');
-  }
-  const credentials = useAppId
-    ? { appid: config.comfyAppId, secret: config.comfySecret }
-    : { email: config.comfyEmail, password: config.comfyPassword };
+  const body = JSON.stringify(credentials());
   loginInflight ??= (async () => {
     let response: Response;
     try {
       response = await fetch(`${base()}/api/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(credentials),
+        body,
         signal: AbortSignal.timeout(15_000),
       });
     } catch (error) {
@@ -75,11 +86,13 @@ async function login(): Promise<string> {
     }
     const data = (await response.json().catch(() => ({}))) as Json;
     if (response.status >= 500) throw new ProviderUnavailableError(`生成服务登录失败（HTTP ${response.status}）`);
-    if (!response.ok || typeof data.token !== 'string') {
-      // 账号密码错误属于配置问题，任务继续排队等管理员修正，不消耗重试次数
+    if (!response.ok || typeof data.token !== 'string' || !data.token) {
+      // 密钥错误属于配置问题，任务继续排队等管理员修正，不消耗重试次数
       throw new ProviderUnavailableError(`生成服务登录失败：${errorText(data) ?? `HTTP ${response.status}`}`);
     }
     token = data.token;
+    tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+    verifiedAt = Date.now();
     return token;
   })().finally(() => {
     loginInflight = null;
@@ -87,21 +100,32 @@ async function login(): Promise<string> {
   return loginInflight;
 }
 
+function forgetToken(): void {
+  token = '';
+  tokenExpiresAt = 0;
+  verifiedAt = 0;
+}
+
+async function ensureToken(): Promise<string> {
+  if (!token || Date.now() >= tokenExpiresAt) return login();
+  return token;
+}
+
 function errorText(data: unknown): string | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Json;
-  if (typeof d.detail === 'string') return d.detail;
+  if (typeof d.detail === 'string' && d.detail) return d.detail;
   if (Array.isArray(d.detail)) {
     return d.detail.map((item) => (item as Json).msg ?? JSON.stringify(item)).join('；');
   }
-  for (const key of ['error', 'message', 'msg']) if (typeof d[key] === 'string') return d[key] as string;
+  for (const key of ['error', 'message', 'msg']) if (typeof d[key] === 'string' && d[key]) return d[key] as string;
   return null;
 }
 
 /** 带登录态的请求：401 时自动重新登录一次；5xx / 网络错误视为服务暂不可用 */
 async function call(method: string, pathname: string, body?: BodyInit, json = true, timeoutMs = 60_000): Promise<Response> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (!token) await login();
+    await ensureToken();
     let response: Response;
     try {
       response = await fetch(`${base()}${pathname}`, {
@@ -117,7 +141,7 @@ async function call(method: string, pathname: string, body?: BodyInit, json = tr
       throw new ProviderUnavailableError(`无法连接生成服务：${(error as Error).message}`);
     }
     if (response.status === 401 && attempt === 0) {
-      token = '';
+      forgetToken();
       continue;
     }
     if (response.status >= 500 || response.status === 429 || response.status === 401) {
@@ -252,63 +276,117 @@ function kindOf(file: string, fallback: 'image' | 'video'): 'image' | 'video' {
   return fallback;
 }
 
-function downloadPath(file: string, kind: 'image' | 'video'): string {
+function downloadPath(file: string, category: 'image' | 'video'): string {
   if (/^https?:\/\//i.test(file)) return file;
   if (file.startsWith('/')) return file;
-  // 只有文件名：走产物下载接口
-  return `/api/products/download/${kind}/${encodeURIComponent(path.basename(file))}`;
+  // 只有文件名：走产物下载接口 /api/products/download/{category}/{filename}
+  return `/api/products/download/${category}/${encodeURIComponent(path.basename(file))}`;
 }
 
-async function download(file: string, fallbackKind: 'image' | 'video'): Promise<ProviderOutput> {
-  const kind = kindOf(file, fallbackKind);
-  const target = downloadPath(file, kind);
+async function download(file: OutputFile): Promise<ProviderOutput> {
+  const kind = kindOf(file.name, file.category);
+  const target = downloadPath(file.name, file.category);
+  // 超分后的视频可能有几十 MB，给足下载时间
   const response = /^https?:\/\//i.test(target)
-    ? await fetch(target, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(300_000) })
-    : await call('GET', target, undefined, false, 300_000);
-  if (!response.ok) throw new Error(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file)}`);
-  const ext = path.extname(file.split('?')[0]).slice(1).toLowerCase();
-  const mime = response.headers.get('content-type')?.split(';')[0] || MIME_BY_EXT[ext] || (kind === 'video' ? 'video/mp4' : 'image/png');
-  return { kind, mime: MIME_BY_EXT[ext] ?? mime, base64: Buffer.from(await response.arrayBuffer()).toString('base64') };
+    ? await fetch(target, { headers: { authorization: `Bearer ${await ensureToken()}` }, signal: AbortSignal.timeout(600_000) })
+    : await call('GET', target, undefined, false, 600_000);
+  if (response.status === 404) throw new Error(`生成服务上找不到产物文件：${path.basename(file.name)}`);
+  if (!response.ok) throw new ProviderUnavailableError(`下载生成结果失败（HTTP ${response.status}）：${path.basename(file.name)}`);
+  const ext = path.extname(file.name.split('?')[0]).slice(1).toLowerCase();
+  const mime = MIME_BY_EXT[ext] ?? response.headers.get('content-type')?.split(';')[0] ?? (kind === 'video' ? 'video/mp4' : 'image/png');
+  return { kind, mime, base64: Buffer.from(await response.arrayBuffer()).toString('base64') };
 }
 
 function progressOf(data: Json): number | undefined {
   for (const key of ['progress', 'percent', 'percentage']) {
+    if (data[key] == null || data[key] === '') continue;
     const value = Number(data[key]);
     if (Number.isFinite(value)) return value > 1 ? value / 100 : value;
   }
   return undefined;
 }
 
+/** 对方不返回进度百分比：按经验耗时估一个，只用于进度条，不影响判断 */
+const EXPECTED_MS = { image: 60_000, video: 15 * 60_000 };
+const runningSince = new Map<string, number>();
+
+function estimate(id: string, kind: 'image' | 'video', status: string): number {
+  if (status === 'postprocessing') return 0.9;
+  if (status !== 'running') return 0;
+  const since = runningSince.get(id) ?? Date.now();
+  runningSince.set(id, since);
+  // 渐近曲线：到预计耗时时约 60%，之后越来越慢，最多 88%
+  const ratio = (Date.now() - since) / EXPECTED_MS[kind];
+  return Math.min(0.88, 0.05 + 0.83 * (1 - Math.exp(-ratio)));
+}
+
+const STAGE_FALLBACK: Record<string, string> = {
+  pending: '在生成服务排队中',
+  queued: '在生成服务排队中',
+  running: '生成中',
+  processing: '生成中',
+  postprocessing: '转码 / 超分中',
+};
+
+interface OutputFile {
+  name: string;
+  category: 'image' | 'video';
+}
+
 interface SubJob {
   id: string;
   state: JobStatus['state'];
   progress: number;
-  files: string[];
+  stage?: string;
+  files: OutputFile[];
   error?: string;
 }
 
-async function pollOne(id: string): Promise<SubJob> {
+function asList(value: unknown): string[] {
+  if (typeof value === 'string' && value) return [value];
+  return [...new Set(collectFiles(value))];
+}
+
+/** 文档里的 result：{category, files:[原片], upscaled:[超分版]}，有超分版时只取超分版 */
+function outputFiles(data: Json, kind: 'image' | 'video'): OutputFile[] {
+  const result = data.result && typeof data.result === 'object' ? (data.result as Json) : null;
+  const category = result?.category === 'image' || result?.category === 'video' ? result.category : kind;
+  let names: string[] = [];
+  if (result) {
+    names = asList(result.upscaled);
+    if (!names.length) names = asList(result.files);
+  }
+  // 兼容其他写法：在整个响应里找像文件名的字段
+  if (!names.length) names = [...new Set(collectFiles(data))];
+  return names.map((name) => ({ name, category: kindOf(name, category) }));
+}
+
+async function pollOne(id: string, kind: 'image' | 'video'): Promise<SubJob> {
   const raw = await callJson('GET', `/api/tasks/${encodeURIComponent(id)}`);
   const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Json;
   const status = String(data.status ?? data.state ?? '').toLowerCase();
-  const progress = progressOf(data);
+  const stage = (typeof data.stage === 'string' && data.stage.trim()) || STAGE_FALLBACK[status];
   if (status === 'failed' || status === 'error') {
+    runningSince.delete(id);
     return { id, state: 'failed', progress: 0, files: [], error: errorText(data) ?? (data.error_message as string) ?? '生成失败' };
   }
   if (status === 'completed' || status === 'succeeded' || status === 'success' || status === 'done') {
-    // 视频任务的 result 里同时有原片（files）和 2x 超分版（upscaled）：有超分版时只取超分版
-    const upscaled = [...new Set(collectFiles((data.result as Json | undefined)?.upscaled))];
-    const files = upscaled.length ? upscaled : [...new Set(collectFiles(data))];
-    if (!files.length) warnOnce(`completed-no-files`, '任务已完成，但响应里没找到产物文件', raw);
+    runningSince.delete(id);
+    const files = outputFiles(data, kind);
+    if (!files.length) warnOnce('completed-no-files', '任务已完成，但响应里没找到产物文件', raw);
     return { id, state: 'succeeded', progress: 1, files };
   }
+  const progress = progressOf(data) ?? estimate(id, kind, status);
   if (status === 'running' || status === 'postprocessing' || status === 'processing') {
-    // 后处理（超分、转码）阶段没有进度时，至少显示在 90% 以上
-    const fallback = status === 'postprocessing' ? 0.92 : 0.1;
-    return { id, state: 'running', progress: progress ?? fallback, files: [] };
+    return { id, state: 'running', progress, stage, files: [] };
   }
   if (status !== 'pending' && status !== 'queued') warnOnce(`status-${status}`, `未知的任务状态「${status}」`, raw);
-  return { id, state: 'pending', progress: progress ?? 0, files: [] };
+  return { id, state: 'pending', progress, stage, files: [] };
+}
+
+function parseJobId(jobId: string): { kind: 'image' | 'video'; ids: string[] } {
+  const [kind, list] = jobId.includes(':') ? (jobId.split(':', 2) as ['image' | 'video', string]) : (['image', jobId] as const);
+  return { kind: kind === 'video' ? 'video' : 'image', ids: list.split(',').filter(Boolean) };
 }
 
 // ---------------- Provider ----------------
@@ -335,7 +413,18 @@ export class ComfyWebProvider implements Provider {
           message = 'ComfyUI 未连接';
         }
       }
+      // 服务在线时顺便确认凭证可用（每 5 分钟一次）：密钥配错时在设置页直接看到原因
+      if (reachable && Date.now() - verifiedAt > VERIFY_EVERY_MS) {
+        const verify = await call('GET', '/api/auth/verify', undefined, true, 10_000);
+        const data = (await verify.json().catch(() => ({}))) as Json;
+        if (!verify.ok || data.valid === false) {
+          forgetToken();
+          throw new ProviderUnavailableError(`生成服务凭证无效：${errorText(data) ?? `HTTP ${verify.status}`}`);
+        }
+        verifiedAt = Date.now();
+      }
     } catch (error) {
+      reachable = false;
       message = (error as Error).message;
     }
     const llm = llmConfigured() ? await llmHealthy() : false;
@@ -356,20 +445,27 @@ export class ComfyWebProvider implements Provider {
     return { jobId: `${kind}:${ids.join(',')}` };
   }
 
+  pollIntervalMs(jobId: string): number {
+    return parseJobId(jobId).kind === 'video' ? config.comfyVideoPollMs : config.comfyImagePollMs;
+  }
+
   async poll(jobId: string): Promise<JobStatus> {
-    const [kind, list] = jobId.includes(':') ? (jobId.split(':', 2) as ['image' | 'video', string]) : ['image' as const, jobId];
-    const jobs = await Promise.all(list.split(',').map(pollOne));
+    const { kind, ids } = parseJobId(jobId);
+    const jobs = await Promise.all(ids.map((id) => pollOne(id, kind)));
     const failed = jobs.find((job) => job.state === 'failed');
     if (failed) return { state: 'failed', error: failed.error };
     if (jobs.every((job) => job.state === 'succeeded')) {
       const files = jobs.flatMap((job) => job.files);
       if (!files.length) return { state: 'failed', error: '任务完成但没有找到产物文件（详见服务日志）' };
       const outputs: ProviderOutput[] = [];
-      for (const file of files) outputs.push(await download(file, kind));
+      for (const file of files) outputs.push(await download(file));
       return { state: 'succeeded', progress: 1, outputs };
     }
     const progress = jobs.reduce((sum, job) => sum + job.progress, 0) / jobs.length;
-    return { state: jobs.some((job) => job.state === 'running') ? 'running' : 'pending', progress };
+    const active = jobs.find((job) => job.state === 'running') ?? jobs.find((job) => job.state === 'pending');
+    const done = jobs.filter((job) => job.state === 'succeeded').length;
+    const stage = jobs.length > 1 && active?.stage ? `${active.stage} · 已完成 ${done}/${jobs.length}` : active?.stage;
+    return { state: jobs.some((job) => job.state === 'running') ? 'running' : 'pending', progress, stage };
   }
 
   async cancel() {

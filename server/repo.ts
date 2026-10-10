@@ -64,6 +64,7 @@ export function toTask(row: Row): Task {
     priority: Number(row.priority),
     lastError: (row.last_error as string | null) ?? null,
     waitReason: (row.wait_reason as string | null) ?? null,
+    stage: (row.stage as string | null) ?? null,
     nextAttemptAt: Number(row.next_attempt_at),
     manualKick: Number(row.manual_kick) === 1,
     outputAssetIds: parseJson<string[]>(row.output_asset_ids, []),

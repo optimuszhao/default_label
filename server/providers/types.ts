@@ -33,6 +33,8 @@ export interface JobStatus {
   state: 'pending' | 'running' | 'succeeded' | 'failed';
   /** 0~1 */
   progress?: number;
+  /** 当前阶段的文字说明（排队中、视频生成中、超分中……），会显示在任务卡片上 */
+  stage?: string;
   outputs?: ProviderOutput[];
   error?: string;
 }
@@ -53,6 +55,8 @@ export interface Provider {
   health(): Promise<Record<Capability, boolean> & { message?: string }>;
   submit(input: SubmitInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<JobStatus>;
+  /** 两次查询之间的最短间隔（毫秒），不实现时每个调度节拍都查 */
+  pollIntervalMs?(jobId: string): number;
   cancel(jobId: string): Promise<void>;
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<string>;
 }

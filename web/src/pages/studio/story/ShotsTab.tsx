@@ -42,7 +42,7 @@ function MediaSlot({
       {task && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 px-3 backdrop-blur-[2px]">
           <span className="text-[11px] text-fg-2">
-            {task.status === 'running' ? `生成中 ${Math.round(task.progress * 100)}%` : task.waitReason ? '等待服务' : task.status === 'paused' ? '已暂停' : '排队中'}
+            {task.status === 'running' ? `${task.stage ?? '生成中'} ${Math.round(task.progress * 100)}%` : task.waitReason ? '等待服务' : task.status === 'paused' ? '已暂停' : '排队中'}
           </span>
           <ProgressBar value={task.status === 'running' ? task.progress : 0} className="mt-1.5 w-2/3" />
         </div>

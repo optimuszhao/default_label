@@ -30,11 +30,12 @@ npm start            # http://<IP>:8787
 ```bash
 PROVIDER=comfyweb
 GEN_API_BASE=http://114.132.237.136:1025
-COMFY_EMAIL=你在对方服务上注册的邮箱
-COMFY_PASSWORD=对应的密码
+COMFY_APPID=对方分配的 API ID
+COMFY_SECRET=对应的密钥
+MAX_RUNNING=2
 ```
 
-账号需要先在对方服务上注册（`/docs` 里的 send-code → register 两步，或请朋友帮忙开一个）。
+织影用 API ID 和密钥换 token（有效 72 小时），到期前和遇到 401 时会自动重新登录；设置页的服务状态每 5 分钟用 `/api/auth/verify` 校验一次凭证，密钥配错会直接显示原因。织影自己的用户注册登录与对方无关，所有用户共用这一组凭证。
 
 对方的接口没有语言模型，AI 写大纲 / 台词 / 分镜需要另外配置 `LLM_API_BASE` 和 `LLM_MODEL`（任何 OpenAI 兼容接口）。不配置也能用，只是这些按钮会提示“语言模型不可用”，内容需要手动写。
 
@@ -44,6 +45,11 @@ COMFY_PASSWORD=对应的密码
 - 视频时长限制 4–15 秒，宽高取 32 的倍数；运镜会拼到提示词末尾。
 - 一次只出一张图，要多张时织影会拆成多个任务。
 - 没有取消接口：在织影里取消后，对方那边仍会跑完，结果被忽略。
+- 视频完成后对方会同时给出原片和 2x 超分版（2688×1536），织影只下载超分版；没有超分版时下载原片。
+- 对方不返回进度百分比：织影显示对方报告的阶段（排队、视频生成中、转码 / 超分中），进度条按经验耗时估算。
+- 查询频率按对方建议：图片每 4 秒、视频每 12 秒（`COMFY_IMAGE_POLL_MS` / `COMFY_VIDEO_POLL_MS`）。
+- 视频单条通常 15–30 分钟，超时上限单独设为 90 分钟（`VIDEO_JOB_TIMEOUT_MS`）。
+- 对方能同时接收多个任务并在 ComfyUI 里排队，`MAX_RUNNING` 设成 2~3 可以让图片不必等长视频跑完才提交。
 
 第一次联调可以先跑 `npm run probe:comfy`（视频用 `npm run probe:comfy -- t2v`），它会打印对方每个接口的原始返回，方便排查。
 
@@ -121,7 +127,7 @@ COMFY_PASSWORD=对应的密码
 1. 任务创建后状态为「排队中」。
 2. 后台调度器每 2 秒运行一次：
    - 查询正在生成的任务进度，完成后下载结果存为资产，并通过 SSE 实时推送到页面；
-   - 把排队任务提交给生成服务（同时运行数由 `MAX_RUNNING` 控制，单卡建议 1）。
+   - 把排队任务提交给生成服务（同时运行数由 `MAX_RUNNING` 控制）。
 3. **服务不可用**（健康检查失败、连不上、5xx）：任务保持排队，标记「等待服务」，按用户设置的间隔重试，不计入失败次数。
 4. **生成失败**（服务返回错误）：按 15 秒、30 秒、60 秒…指数退避重试，超过 3 次标记失败，可以手动重试。
 5. **自动调度**关闭时，只有点「立即运行」的任务才会提交；开启时服务可用就自动提交。
@@ -136,12 +142,14 @@ COMFY_PASSWORD=对应的密码
 | `PROVIDER` | `mock` | `mock` 模拟服务；`comfyweb` 朋友的 ComfyUI Web API；`http` 按 `docs/API_CONTRACT.md` 实现的服务 |
 | `GEN_API_BASE` | 空 | 生成服务地址，例如 `http://192.168.1.50:9000` |
 | `GEN_API_KEY` | 空 | 生成服务鉴权密钥（`http` 模式，可选） |
-| `COMFY_EMAIL` / `COMFY_PASSWORD` | 空 | `comfyweb` 模式的登录账号，织影会自动登录并在 token 过期时重新登录 |
+| `COMFY_APPID` / `COMFY_SECRET` | 空 | `comfyweb` 模式的 API ID 和密钥，织影会自动换 token 并在过期前续期 |
+| `COMFY_IMAGE_POLL_MS` / `COMFY_VIDEO_POLL_MS` | `4000` / `12000` | `comfyweb` 模式查询图片 / 视频任务进度的间隔 |
 | `LLM_API_BASE` / `LLM_API_KEY` / `LLM_MODEL` | 空 | AI 写作助手用的语言模型，任何 OpenAI 兼容接口；不配置时 AI 助手不可用 |
 | `MOCK_FLAKY` | 空 | 设为 `1` 时模拟服务会随机不可用，用来演示队列的等待与重试 |
 | `MAX_RUNNING` | `1` | 同时提交给生成服务的任务数 |
 | `MAX_ATTEMPTS` | `3` | 单任务最多失败次数 |
-| `JOB_TIMEOUT_MS` | `1800000` | 单任务超时（30 分钟） |
+| `JOB_TIMEOUT_MS` | `1800000` | 图片任务超时（30 分钟） |
+| `VIDEO_JOB_TIMEOUT_MS` | `5400000` | 视频任务超时（90 分钟） |
 | `COOKIE_SECURE` | 空 | 通过 HTTPS 访问时设为 `1` |
 | `LOG_LEVEL` | `warn` | 后端日志级别 |
 

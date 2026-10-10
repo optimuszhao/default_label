@@ -94,7 +94,13 @@ function TaskRow({ task, now }: { task: Task; now: number }) {
             <span>{timeAgo(task.createdAt)}</span>
             {task.attempts > 0 && <span>尝试 {task.attempts}/{task.maxAttempts}</span>}
           </div>
-          {task.status === 'running' && <ProgressBar value={task.progress} className="mt-2 max-w-xs" />}
+          {task.status === 'running' && (
+            <div className="mt-2 flex max-w-sm items-center gap-2">
+              <ProgressBar value={task.progress} className="min-w-0 flex-1" />
+              <span className="shrink-0 text-xs text-fg-3">{task.stage ?? '生成中'}</span>
+            </div>
+          )}
+          {task.status === 'running' && task.waitReason && <p className="mt-1.5 text-xs text-warn">{task.waitReason}</p>}
           {task.status === 'queued' && task.waitReason && (
             <p className="mt-1.5 text-xs text-warn">
               {task.waitReason}

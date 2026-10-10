@@ -28,13 +28,17 @@ export const config = {
   provider: (process.env.PROVIDER || 'mock') as 'mock' | 'http' | 'comfyweb',
   genApiBase: (process.env.GEN_API_BASE ?? '').replace(/\/+$/, ''),
   genApiKey: process.env.GEN_API_KEY ?? '',
-  /** PROVIDER=comfyweb：朋友的「ComfyUI Web API」账号，用于换取 JWT；也可直接给 COMFY_TOKEN */
-  comfyEmail: process.env.COMFY_EMAIL ?? '',
-  comfyPassword: process.env.COMFY_PASSWORD ?? '',
-  comfyToken: process.env.COMFY_TOKEN ?? '',
-  /** 开放平台模式：用 API ID + 密钥换取 token；配置后优先于 COMFY_EMAIL / COMFY_PASSWORD */
+  /** PROVIDER=comfyweb：对方分配的 API ID + 密钥，用于换取 token（有效期 72 小时，过期自动重新登录） */
   comfyAppId: process.env.COMFY_APPID ?? '',
   comfySecret: process.env.COMFY_SECRET ?? '',
+  /** 也可以直接给一个现成的 token（调试用） */
+  comfyToken: process.env.COMFY_TOKEN ?? '',
+  /** 旧版邮箱账号登录，新版接口已不再使用，仅作兼容 */
+  comfyEmail: process.env.COMFY_EMAIL ?? '',
+  comfyPassword: process.env.COMFY_PASSWORD ?? '',
+  /** 查询任务进度的间隔：对方建议图片 3–5 秒、视频 10–15 秒 */
+  comfyImagePollMs: num('COMFY_IMAGE_POLL_MS', 4000),
+  comfyVideoPollMs: num('COMFY_VIDEO_POLL_MS', 12000),
 
   /**
    * 语言模型（AI 写大纲 / 台词 / 分镜）。任何 OpenAI 兼容的 /v1/chat/completions 接口都可以，
@@ -55,8 +59,10 @@ export const config = {
   maxRunning: num('MAX_RUNNING', 1),
   /** 单个任务默认最多重试次数 */
   maxAttempts: num('MAX_ATTEMPTS', 3),
-  /** 单个任务最长运行时间，超时视为失败 */
+  /** 单个图片任务最长运行时间，超时视为失败 */
   jobTimeoutMs: num('JOB_TIMEOUT_MS', 30 * 60 * 1000),
+  /** 视频任务最长运行时间：含转码和 2x 超分，单条通常 15–30 分钟，排队时更久 */
+  videoJobTimeoutMs: num('VIDEO_JOB_TIMEOUT_MS', 90 * 60 * 1000),
 
   sessionDays: num('SESSION_DAYS', 30),
   cookieSecure: process.env.COOKIE_SECURE === '1',

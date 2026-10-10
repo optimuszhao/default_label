@@ -482,6 +482,7 @@ const TaskCard = memo(function TaskCard({ task, onOpen }: { task: Task; onOpen: 
                     <>
                       <p className="font-mono text-2xl font-semibold">{Math.round(task.progress * 100)}%</p>
                       <ProgressBar value={task.progress} className="mt-2 w-24" />
+                      {task.stage && <p className="mt-2 text-xs text-fg-2">{task.stage}</p>}
                     </>
                   )}
                   {task.status === 'queued' && (

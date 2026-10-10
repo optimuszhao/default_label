@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
   wait_reason TEXT,
+  stage TEXT,
   next_attempt_at INTEGER NOT NULL DEFAULT 0,
   manual_kick INTEGER NOT NULL DEFAULT 0,
   provider_job_id TEXT,
@@ -89,6 +90,13 @@ CREATE TABLE IF NOT EXISTS assets (
 CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_story ON assets(story_id, shot_id);
 `);
+
+// 旧库补列（CREATE TABLE IF NOT EXISTS 不会给已有表加列）
+function addColumn(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+addColumn('tasks', 'stage', 'TEXT');
 
 export function newId(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url');

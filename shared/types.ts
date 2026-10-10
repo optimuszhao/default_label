@@ -89,6 +89,8 @@ export interface Task {
   lastError: string | null;
   /** 等待原因（服务不可用等），不算失败 */
   waitReason: string | null;
+  /** 生成服务报告的当前阶段，例如「视频生成中」「超分中」 */
+  stage: string | null;
   nextAttemptAt: number;
   manualKick: boolean;
   outputAssetIds: string[];

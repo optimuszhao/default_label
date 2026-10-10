@@ -44,6 +44,7 @@ function setWaiting(task: Task, reason: string): void {
     next_attempt_at: now() + pollIntervalMs(userOf(task.id)),
     provider_job_id: null,
     progress: 0,
+    stage: null,
   });
   emitTask(task.id);
 }
@@ -59,12 +60,14 @@ function fail(task: Task, message: string): void {
       next_attempt_at: now() + backoff,
       provider_job_id: null,
       progress: 0,
+      stage: null,
     });
   } else {
     update(task.id, {
       status: 'failed',
       last_error: message,
       wait_reason: null,
+      stage: null,
       provider_job_id: null,
       finished_at: now(),
     });
@@ -122,14 +125,20 @@ async function complete(task: Task, outputs: ProviderOutput[]): Promise<void> {
     progress: 1,
     output_asset_ids: JSON.stringify(assetIds),
     wait_reason: null,
+    stage: null,
     last_error: null,
     finished_at: now(),
   });
   emitTask(task.id);
 }
 
+/** 每个任务上次查询进度的时间，按适配器建议的间隔查询（图片几秒一次，视频十几秒一次） */
+const lastPolledAt = new Map<string, number>();
+
 async function pollRunning(): Promise<void> {
   const rows = db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as Row[];
+  const runningIds = new Set(rows.map((row) => String(row.id)));
+  for (const id of lastPolledAt.keys()) if (!runningIds.has(id)) lastPolledAt.delete(id);
   for (const row of rows) {
     const task = toTask(row);
     const jobId = row.provider_job_id as string | null;
@@ -137,11 +146,15 @@ async function pollRunning(): Promise<void> {
       fail(task, '缺少生成服务任务号');
       continue;
     }
-    if (task.startedAt && now() - task.startedAt > config.jobTimeoutMs) {
+    const timeoutMs = capabilityOf(task.type) === 'video' ? config.videoJobTimeoutMs : config.jobTimeoutMs;
+    if (task.startedAt && now() - task.startedAt > timeoutMs) {
       await provider.cancel(jobId).catch(() => undefined);
-      fail(task, '生成超时');
+      fail(task, `生成超时（超过 ${Math.round(timeoutMs / 60_000)} 分钟）`);
       continue;
     }
+    const interval = provider.pollIntervalMs?.(jobId) ?? 0;
+    if (now() - (lastPolledAt.get(task.id) ?? 0) < interval) continue;
+    lastPolledAt.set(task.id, now());
     try {
       const status = await provider.poll(jobId);
       if (status.state === 'succeeded') {
@@ -150,8 +163,9 @@ async function pollRunning(): Promise<void> {
         fail(task, status.error ?? '生成失败');
       } else {
         const progress = status.progress ?? task.progress;
-        if (Math.abs(progress - task.progress) >= 0.02 || task.waitReason) {
-          update(task.id, { progress, wait_reason: null });
+        const stage = status.stage ?? task.stage;
+        if (Math.abs(progress - task.progress) >= 0.02 || task.waitReason || stage !== task.stage) {
+          update(task.id, { progress, stage, wait_reason: null });
           emitTask(task.id);
         }
       }
@@ -215,6 +229,7 @@ async function dispatch(): Promise<void> {
         attempts: task.attempts + 1,
         manual_kick: 0,
         progress: 0,
+        stage: null,
         wait_reason: null,
         started_at: now(),
       });

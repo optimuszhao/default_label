@@ -29,16 +29,15 @@ services:
       PROVIDER: ${PROVIDER:-mock}
       GEN_API_BASE: ${GEN_API_BASE:-}
       GEN_API_KEY: ${GEN_API_KEY:-}
-      # comfyweb 的登录账号（在对方服务上注册的邮箱和密码）
-      # 开放平台：API ID + 密钥换 token（配置后优先于邮箱密码）
+      # comfyweb：对方分配的 API ID 和密钥，织影用它换 token（72 小时有效，自动续期）
       COMFY_APPID: ${COMFY_APPID:-}
       COMFY_SECRET: ${COMFY_SECRET:-}
-      COMFY_EMAIL: ${COMFY_EMAIL:-}
-      COMFY_PASSWORD: ${COMFY_PASSWORD:-}
       # AI 写作助手用的语言模型，任何 OpenAI 兼容接口
       LLM_API_BASE: ${LLM_API_BASE:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
-      MAX_RUNNING: ${MAX_RUNNING:-1}
+      # 同时提交的任务数，对方在 ComfyUI 里排队；视频超时默认 90 分钟
+      MAX_RUNNING: ${MAX_RUNNING:-2}
+      VIDEO_JOB_TIMEOUT_MS: ${VIDEO_JOB_TIMEOUT_MS:-5400000}
       # 通过 HTTPS 反向代理访问时设为 1
       COOKIE_SECURE: ${COOKIE_SECURE:-}
