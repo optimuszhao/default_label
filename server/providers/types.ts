@@ -1,6 +1,7 @@
 // 生成服务适配层的统一接口。
 // 业务代码（调度器、AI 助手）只依赖这里的 Provider 接口，
 // 具体对接 ComfyUI / MiniMax / 千问 Image / LLM 的细节都在各自的实现里。
+import type { Capabilities } from '../../shared/operator.ts';
 import type { Capability, GenParams, TaskType } from '../../shared/types.ts';
 
 export interface ProviderImageInput {
@@ -55,6 +56,8 @@ export interface ChatOptions {
 
 export interface Provider {
   readonly name: string;
+  /** 能力声明：前端据此显示控件；不实现时用通用默认值 */
+  capabilities?(): Capabilities;
   health(): Promise<Record<Capability, boolean> & { message?: string }>;
   submit(input: SubmitInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<JobStatus>;

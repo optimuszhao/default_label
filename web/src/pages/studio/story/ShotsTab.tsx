@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
 import { ChevronDown, ChevronUp, Clapperboard, Film, Image as ImageIcon, ImagePlus, Plus, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import { maxDuration } from '../../../../../shared/operator.ts';
 import type { Asset, Scene, Shot, Task } from '../../../../../shared/types.ts';
 import { AssetPicker } from '../../../components/AssetPicker.tsx';
 import { Lightbox } from '../../../components/Lightbox.tsx';
@@ -66,6 +67,7 @@ const ShotCard = memo(function ShotCard({
   const { data, update, media } = useStory();
   const generator = useShotGenerator();
   const upsertAssets = useStore((s) => s.upsertAssets);
+  const maxSeconds = maxDuration(useStore((s) => s.capabilities).video);
   const [picking, setPicking] = useState(false);
   const m = media.get(shot.id) ?? EMPTY_MEDIA;
   const set = (patch: Partial<Shot>) => update(updateShot(scene.id, shot.id, patch));
@@ -93,6 +95,11 @@ const ShotCard = memo(function ShotCard({
           />
           秒
         </label>
+        {shot.duration > maxSeconds && (
+          <span className="text-xs text-warn" title={`生成服务单段视频最长 ${maxSeconds} 秒，生成时会截到 ${maxSeconds} 秒`}>
+            超过 {maxSeconds} 秒，建议拆成两个镜头
+          </span>
+        )}
         <span className="ml-auto flex">
           <IconButton label="上移" className="size-7" onClick={() => update(updateScene(scene.id, (s) => ({ ...s, shots: moveItem(s.shots, index, -1) })))}><ChevronUp className="size-3.5" /></IconButton>
           <IconButton label="下移" className="size-7" onClick={() => update(updateScene(scene.id, (s) => ({ ...s, shots: moveItem(s.shots, index, 1) })))}><ChevronDown className="size-3.5" /></IconButton>

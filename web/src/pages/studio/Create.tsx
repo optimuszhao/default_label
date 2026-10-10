@@ -28,10 +28,7 @@ import {
   ASPECT_RATIOS,
   CAMERA_MOTIONS,
   cssRatio,
-  IMAGE_RESOLUTIONS,
   imageParams,
-  VIDEO_DURATIONS,
-  VIDEO_RESOLUTIONS,
   videoParams,
 } from '../../lib/presets.ts';
 import { reportError, useStore } from '../../lib/store.ts';
@@ -132,6 +129,8 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
   const upsertTasks = useStore((s) => s.upsertTasks);
   const toast = useStore((s) => s.toast);
   const health = useStore((s) => s.health);
+  const caps = useStore((s) => s.capabilities);
+  const cap = mode === 'image' ? caps.image : caps.video;
   const [state, setState] = useState<ComposerState>(INITIAL);
   const [picker, setPicker] = useState<null | 'ref' | 'first' | 'last'>(null);
   const [panel, setPanel] = useState<null | 'ratio' | 'advanced'>(null);
@@ -172,8 +171,21 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, [state.prompt]);
 
-  const type: TaskType =
-    mode === 'image' ? (state.refs.length ? 'i2i' : 't2i') : state.firstFrame ? 'i2v' : 't2v';
+  // 只把当前算子支持的输入算进去（切换算子后旧的多余参考图不会被提交）
+  const refs = state.refs.slice(0, caps.image.maxReferences);
+  const firstFrame = caps.video.firstFrame ? state.firstFrame : null;
+  const lastFrame = caps.video.lastFrame ? state.lastFrame : null;
+  const type: TaskType = mode === 'image' ? (refs.length ? 'i2i' : 't2i') : firstFrame ? 'i2v' : 't2v';
+  const size =
+    mode === 'image'
+      ? imageParams(state.aspectRatio, state.imageResolution, {}, caps)
+      : videoParams(state.aspectRatio, state.videoResolution, {}, caps);
+  const ratios = cap.sizes.length ? cap.sizes.map((item) => item.aspectRatio) : ASPECT_RATIOS;
+  const resolutionLabel = cap.sizes.length
+    ? `${size.width}×${size.height}`
+    : cap.resolutions.find((r) => r.value === (mode === 'image' ? state.imageResolution : state.videoResolution))?.label ?? '';
+  const duration = cap.durations.includes(state.duration) ? state.duration : (cap.durations.find((d) => d >= state.duration) ?? cap.durations[0] ?? 5);
+  const count = Math.min(state.count, caps.image.maxCount);
 
   async function submit(runNow: boolean) {
     if (!state.prompt.trim()) {
@@ -183,32 +195,34 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
     }
     const extra = {
       seed: state.seed ? Number(state.seed) : null,
-      ...(state.steps ? { steps: Number(state.steps) } : {}),
-      ...(state.cfg ? { cfg: Number(state.cfg) } : {}),
+      ...(state.steps && cap.steps ? { steps: Number(state.steps) } : {}),
+      ...(state.cfg && cap.cfg ? { cfg: Number(state.cfg) } : {}),
     };
     const params =
       mode === 'image'
-        ? imageParams(state.aspectRatio, state.imageResolution, {
-            ...extra,
-            count: state.count,
-            ...(type === 'i2i' ? { strength: state.strength } : {}),
-          })
-        : videoParams(state.aspectRatio, state.videoResolution, {
-            ...extra,
-            duration: state.duration,
-            ...(state.cameraMotion !== '自动' ? { cameraMotion: state.cameraMotion } : {}),
-          });
+        ? imageParams(
+            state.aspectRatio,
+            state.imageResolution,
+            { ...extra, count, ...(type === 'i2i' && caps.image.strength ? { strength: state.strength } : {}) },
+            caps,
+          )
+        : videoParams(
+            state.aspectRatio,
+            state.videoResolution,
+            { ...extra, duration, ...(state.cameraMotion !== '自动' ? { cameraMotion: state.cameraMotion } : {}) },
+            caps,
+          );
     setSubmitting(runNow ? 'run' : 'queue');
     try {
       const task = await api.createTask({
         type,
         prompt: state.prompt.trim(),
-        negativePrompt: state.negativePrompt.trim(),
+        negativePrompt: cap.negativePrompt ? state.negativePrompt.trim() : '',
         params,
         inputs: {
-          referenceAssetIds: state.refs.map((asset) => asset.id),
-          firstFrameAssetId: state.firstFrame?.id ?? null,
-          lastFrameAssetId: state.lastFrame?.id ?? null,
+          referenceAssetIds: mode === 'image' ? refs.map((asset) => asset.id) : [],
+          firstFrameAssetId: mode === 'video' ? (firstFrame?.id ?? null) : null,
+          lastFrameAssetId: mode === 'video' ? (lastFrame?.id ?? null) : null,
         },
         runNow,
       });
@@ -243,19 +257,23 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
     <div className="rounded-xl border border-line-strong bg-ink-1/95 p-3 shadow-[0_16px_48px_-12px_rgb(0_0_0/0.85)] backdrop-blur-xl sm:p-3.5">
       <div className="flex items-start gap-2 sm:gap-3">
         {mode === 'image' ? (
-          <div className="flex gap-1.5">
-            {state.refs.map((asset) => (
-              <RefSlot key={asset.id} asset={asset} label="参考" onPick={() => undefined} onClear={() => set({ refs: state.refs.filter((item) => item.id !== asset.id) })} />
-            ))}
-            {state.refs.length < 4 && <RefSlot asset={null} label="参考图" onPick={() => setPicker('ref')} onClear={() => undefined} />}
-          </div>
+          caps.image.maxReferences > 0 && (
+            <div className="flex gap-1.5">
+              {refs.map((asset) => (
+                <RefSlot key={asset.id} asset={asset} label="参考" onPick={() => undefined} onClear={() => set({ refs: state.refs.filter((item) => item.id !== asset.id) })} />
+              ))}
+              {refs.length < caps.image.maxReferences && <RefSlot asset={null} label="参考图" onPick={() => setPicker('ref')} onClear={() => undefined} />}
+            </div>
+          )
         ) : (
-          <div className="flex gap-1.5">
-            <RefSlot asset={state.firstFrame} label="首帧" onPick={() => setPicker('first')} onClear={() => set({ firstFrame: null })} />
-            {state.firstFrame && (
-              <RefSlot asset={state.lastFrame} label="尾帧" onPick={() => setPicker('last')} onClear={() => set({ lastFrame: null })} />
-            )}
-          </div>
+          caps.video.firstFrame && (
+            <div className="flex gap-1.5">
+              <RefSlot asset={firstFrame} label="首帧" onPick={() => setPicker('first')} onClear={() => set({ firstFrame: null })} />
+              {firstFrame && caps.video.lastFrame && (
+                <RefSlot asset={lastFrame} label="尾帧" onPick={() => setPicker('last')} onClear={() => set({ lastFrame: null })} />
+              )}
+            </div>
+          )
         )}
         <textarea
           ref={textareaRef}
@@ -268,10 +286,10 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
           maxLength={4000}
           placeholder={
             mode === 'image'
-              ? state.refs.length
+              ? refs.length
                 ? '描述你想如何改变参考图……'
                 : '描述你想生成的画面，例如：雨夜霓虹街头的赛博少女，电影感光影'
-              : state.firstFrame
+              : firstFrame
                 ? '描述画面如何动起来，例如：镜头缓慢推进，人物转身微笑'
                 : '描述视频画面与镜头运动，例如：无人机穿过云海，晨光洒在雪山上'
           }
@@ -293,16 +311,21 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
           <span className="chip !h-7 !text-xs" data-active="true">{TASK_TYPE_LABEL[type]}</span>
           <button className="chip !h-7 !text-xs" onClick={() => setPanel(panel === 'ratio' ? null : 'ratio')}>
             <span className="inline-block rounded-[3px] border border-current" style={{ aspectRatio: cssRatio(state.aspectRatio), height: 11 }} />
-            {state.aspectRatio} · {mode === 'image' ? IMAGE_RESOLUTIONS.find((r) => r.value === state.imageResolution)?.label : state.videoResolution.toUpperCase()}
+            {state.aspectRatio} · {resolutionLabel}
           </button>
           {mode === 'video' ? (
-            <button className="chip !h-7 !text-xs" onClick={() => set({ duration: VIDEO_DURATIONS[(VIDEO_DURATIONS.indexOf(state.duration as 5) + 1) % VIDEO_DURATIONS.length] })}>
-              <Clock className="size-3.5" /> {state.duration}s
+            <button
+              className="chip !h-7 !text-xs"
+              onClick={() => set({ duration: cap.durations[(cap.durations.indexOf(duration) + 1) % cap.durations.length] ?? duration })}
+            >
+              <Clock className="size-3.5" /> {duration}s
             </button>
           ) : (
-            <button className="chip !h-7 !text-xs" onClick={() => set({ count: (state.count % 4) + 1 })}>
-              {state.count} 张
-            </button>
+            caps.image.maxCount > 1 && (
+              <button className="chip !h-7 !text-xs" onClick={() => set({ count: (count % caps.image.maxCount) + 1 })}>
+                {count} 张
+              </button>
+            )
           )}
           <button className="chip !h-7 !text-xs" onClick={() => setPanel(panel === 'advanced' ? null : 'advanced')} aria-label="高级参数">
             <SlidersHorizontal className="size-3.5" />
@@ -330,36 +353,45 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
           <Popover open={panel === 'ratio'} onClose={() => setPanel(null)} className="right-0 w-[min(20rem,calc(100vw-2rem))]">
             <p className="label">画面比例</p>
             <div className="grid grid-cols-3 gap-2">
-              {ASPECT_RATIOS.map((ratio) => (
+              {ratios.map((ratio) => (
                 <button key={ratio} className="chip !h-auto flex-col !py-2" data-active={state.aspectRatio === ratio} onClick={() => set({ aspectRatio: ratio })}>
                   <span className="inline-block rounded-[3px] border-[1.5px] border-current" style={{ aspectRatio: cssRatio(ratio), height: 18 }} />
                   {ratio}
                 </button>
               ))}
             </div>
-            <p className="label mt-4">分辨率</p>
-            <div className="flex flex-wrap gap-2">
-              {(mode === 'image' ? IMAGE_RESOLUTIONS : VIDEO_RESOLUTIONS).map((item) => {
-                const active = mode === 'image' ? state.imageResolution === item.value : state.videoResolution === item.value;
-                return (
-                  <button
-                    key={item.value}
-                    className="chip"
-                    data-active={active}
-                    onClick={() => set(mode === 'image' ? { imageResolution: item.value } : { videoResolution: item.value })}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-            {mode === 'video' && (
+            {cap.sizes.length > 0 ? (
+              <p className="mt-3 text-xs text-fg-3">
+                尺寸由生成服务固定为 {size.width}×{size.height}
+                {cap.note ? `，${cap.note}` : ''}
+              </p>
+            ) : (
+              <>
+                <p className="label mt-4">分辨率</p>
+                <div className="flex flex-wrap gap-2">
+                  {cap.resolutions.map((item) => {
+                    const active = mode === 'image' ? state.imageResolution === item.value : state.videoResolution === item.value;
+                    return (
+                      <button
+                        key={item.value}
+                        className="chip"
+                        data-active={active}
+                        onClick={() => set(mode === 'image' ? { imageResolution: item.value } : { videoResolution: item.value })}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {mode === 'video' && cap.durations.length > 0 && (
               <>
                 <p className="label mt-4">时长</p>
                 <div className="flex flex-wrap gap-2">
-                  {VIDEO_DURATIONS.map((duration) => (
-                    <button key={duration} className="chip" data-active={state.duration === duration} onClick={() => set({ duration })}>
-                      {duration} 秒
+                  {cap.durations.map((value) => (
+                    <button key={value} className="chip" data-active={duration === value} onClick={() => set({ duration: value })}>
+                      {value} 秒
                     </button>
                   ))}
                 </div>
@@ -380,29 +412,35 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
                 </div>
               </div>
             )}
-            {mode === 'image' && state.refs.length > 0 && (
+            {mode === 'image' && refs.length > 0 && caps.image.strength && (
               <div>
                 <p className="label">重绘强度 {state.strength.toFixed(2)}</p>
                 <input type="range" min={0.1} max={1} step={0.05} value={state.strength} onChange={(e) => set({ strength: Number(e.target.value) })} className="w-full accent-violet" />
               </div>
             )}
-            <div>
-              <p className="label">反向提示词</p>
-              <textarea className="field resize-none text-sm" rows={2} value={state.negativePrompt} onChange={(e) => set({ negativePrompt: e.target.value })} placeholder="不希望出现的内容，例如：模糊、畸形、水印" />
-            </div>
+            {cap.negativePrompt && (
+              <div>
+                <p className="label">反向提示词</p>
+                <textarea className="field resize-none text-sm" rows={2} value={state.negativePrompt} onChange={(e) => set({ negativePrompt: e.target.value })} placeholder="不希望出现的内容，例如：模糊、畸形、水印" />
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <p className="label">种子</p>
                 <input className="field !px-2.5 text-sm" inputMode="numeric" value={state.seed} onChange={(e) => set({ seed: e.target.value.replace(/\D/g, '') })} placeholder="随机" />
               </div>
-              <div>
-                <p className="label">步数</p>
-                <input className="field !px-2.5 text-sm" inputMode="numeric" value={state.steps} onChange={(e) => set({ steps: e.target.value.replace(/\D/g, '') })} placeholder="默认" />
-              </div>
-              <div>
-                <p className="label">CFG</p>
-                <input className="field !px-2.5 text-sm" inputMode="decimal" value={state.cfg} onChange={(e) => set({ cfg: e.target.value.replace(/[^\d.]/g, '') })} placeholder="默认" />
-              </div>
+              {cap.steps && (
+                <div>
+                  <p className="label">步数</p>
+                  <input className="field !px-2.5 text-sm" inputMode="numeric" value={state.steps} onChange={(e) => set({ steps: e.target.value.replace(/\D/g, '') })} placeholder="默认" />
+                </div>
+              )}
+              {cap.cfg && (
+                <div>
+                  <p className="label">CFG</p>
+                  <input className="field !px-2.5 text-sm" inputMode="decimal" value={state.cfg} onChange={(e) => set({ cfg: e.target.value.replace(/[^\d.]/g, '') })} placeholder="默认" />
+                </div>
+              )}
             </div>
           </Popover>
         </div>
@@ -417,10 +455,10 @@ function Composer({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mod
       <AssetPicker
         open={picker !== null}
         onClose={() => setPicker(null)}
-        max={picker === 'ref' ? 4 - state.refs.length : 1}
+        max={picker === 'ref' ? Math.max(1, caps.image.maxReferences - refs.length) : 1}
         title={picker === 'ref' ? '选择参考图' : picker === 'first' ? '选择首帧' : '选择尾帧'}
         onPick={(picked) => {
-          if (picker === 'ref') set({ refs: [...state.refs, ...picked].slice(0, 4) });
+          if (picker === 'ref') set({ refs: [...refs, ...picked].slice(0, caps.image.maxReferences) });
           if (picker === 'first') set({ firstFrame: picked[0] });
           if (picker === 'last') set({ lastFrame: picked[0] });
         }}

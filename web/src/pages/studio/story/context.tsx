@@ -3,7 +3,9 @@ import type { Scene, Shot, StoryData } from '../../../../../shared/types.ts';
 import { api, type NewTask } from '../../../lib/api.ts';
 import { imageParams, videoParams } from '../../../lib/presets.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
-import { characterRefs, keyframePrompt, videoPrompt, type Recipe, type ShotMedia } from './model.ts';
+import { keyframePrompt, videoPrompt, type Recipe, type ShotMedia } from './model.ts';
+
+export const DEFAULT_KEYFRAME_NEGATIVE = '模糊，低质量，畸形，多余的手指，文字水印';
 
 export interface StoryContextValue {
   storyId: string;
@@ -24,21 +26,25 @@ export function useStory(): StoryContextValue {
 
 const shotNumber = (scene: Scene, shot: Shot) => String(scene.shots.findIndex((s) => s.id === shot.id) + 1).padStart(2, '0');
 
-/** 把分镜转成生成任务。关键帧走文生图（有角色定妆照时走图生图），视频优先用关键帧做图生视频 */
+/**
+ * 把分镜转成生成任务。关键帧走文生图：角色外貌已经写进提示词，
+ * 不再把定妆照当图生图的底图（底图会把构图带偏，而对方接口也没有重绘强度）。
+ * 视频优先用关键帧做图生视频。
+ */
 export function useShotGenerator() {
   const { storyId, data, media } = useStory();
   const upsertTasks = useStore((s) => s.upsertTasks);
   const toast = useStore((s) => s.toast);
+  const caps = useStore((s) => s.capabilities);
 
   function keyframeTask(scene: Scene, shot: Shot, runNow: boolean): NewTask {
-    const refs = characterRefs(data, shot);
     return {
-      type: refs.length ? 'i2i' : 't2i',
+      type: 't2i',
       title: `${scene.title} · #${shotNumber(scene, shot)} 关键帧`,
       prompt: keyframePrompt(data, scene, shot),
-      negativePrompt: '模糊，低质量，畸形，多余的手指，文字水印',
-      params: imageParams(data.aspectRatio, '1k', refs.length ? { strength: 0.6 } : {}),
-      inputs: { referenceAssetIds: refs },
+      negativePrompt: data.negativePrompt?.trim() || DEFAULT_KEYFRAME_NEGATIVE,
+      params: imageParams(data.aspectRatio, '1k', {}, caps),
+      inputs: {},
       link: { storyId, shotId: shot.id, purpose: 'keyframe' },
       runNow,
     };
@@ -51,7 +57,7 @@ export function useShotGenerator() {
       title: `${scene.title} · #${shotNumber(scene, shot)} 视频`,
       prompt: videoPrompt(data, scene, shot),
       negativePrompt: '画面闪烁，人物变形，低质量',
-      params: videoParams(data.aspectRatio, '720p', { duration: shot.duration }),
+      params: videoParams(data.aspectRatio, '720p', { duration: shot.duration }, caps),
       inputs: { firstFrameAssetId: keyframe?.id ?? null },
       link: { storyId, shotId: shot.id, purpose: 'video' },
       runNow,

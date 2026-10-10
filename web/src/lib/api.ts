@@ -15,6 +15,8 @@ import type {
   UserSettings,
 } from '../../../shared/types.ts';
 
+import type { Capabilities } from '../../../shared/operator.ts';
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -66,6 +68,7 @@ export const api = {
 
   health: () => request<ProviderHealth>('GET', '/api/health'),
   refreshHealth: () => request<ProviderHealth>('POST', '/api/health/refresh'),
+  capabilities: () => request<Capabilities>('GET', '/api/capabilities'),
 
   tasks: (query: { status?: string; storyId?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();

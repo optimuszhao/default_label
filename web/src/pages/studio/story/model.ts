@@ -154,13 +154,6 @@ export function videoPrompt(data: StoryData, scene: Scene, shot: Shot): string {
     .join('');
 }
 
-export function characterRefs(data: StoryData, shot: Shot): string[] {
-  return shot.characterIds
-    .map((id) => data.characters.find((c) => c.id === id)?.referenceAssetId)
-    .filter((id): id is string => Boolean(id))
-    .slice(0, 4);
-}
-
 export function dialogueFor(scene: Scene, shot: Shot): DialogueLine[] {
   return shot.dialogueIds
     .map((id) => scene.dialogue.find((d) => d.id === id))

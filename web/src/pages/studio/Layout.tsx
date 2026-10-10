@@ -26,13 +26,15 @@ export default function StudioLayout() {
   const user = useStore((s) => s.user);
   const upsertTasks = useStore((s) => s.upsertTasks);
   const setHealth = useStore((s) => s.setHealth);
+  const setCapabilities = useStore((s) => s.setCapabilities);
   const active = useQueueBadge();
 
   // 进入工作台时拉取最近任务和服务状态，之后靠 SSE 增量更新
   useEffect(() => {
     void api.tasks({ limit: 300 }).then(upsertTasks).catch(() => undefined);
     void api.health().then(setHealth).catch(() => undefined);
-  }, [upsertTasks, setHealth]);
+    void api.capabilities().then(setCapabilities).catch(() => undefined);
+  }, [upsertTasks, setHealth, setCapabilities]);
 
   return (
     <div className="min-h-dvh md:pl-[76px] lg:pl-56">

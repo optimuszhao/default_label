@@ -1,64 +1,41 @@
+import { clampDuration, DEFAULT_CAPABILITIES, resolveSize, type Capabilities } from '../../../shared/operator.ts';
 import type { GenParams } from '../../../shared/types.ts';
 
-export const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const;
-
-export const IMAGE_RESOLUTIONS = [
-  { value: '1k', label: '标准 1K', short: 1024 },
-  { value: '2k', label: '高清 2K', short: 1536 },
-] as const;
-
-export const VIDEO_RESOLUTIONS = [
-  { value: '480p', label: '480P', short: 480 },
-  { value: '720p', label: '720P', short: 720 },
-  { value: '1080p', label: '1080P', short: 1080 },
-] as const;
-
-// 与生成服务一致：视频时长 4–15 秒
-export const VIDEO_DURATIONS = [4, 5, 8, 10, 15] as const;
+export { ASPECT_RATIOS, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS } from '../../../shared/operator.ts';
 
 export const CAMERA_MOTIONS = ['自动', '固定', '推镜', '拉镜', '左摇', '右摇', '上升', '下降', '环绕', '跟随'] as const;
 
 export const SHOT_SIZES = ['远景', '全景', '中景', '近景', '特写'] as const;
 export const CAMERA_MOVES = ['固定', '推', '拉', '摇', '移', '跟', '环绕', '升降'] as const;
 
-function round16(value: number): number {
-  return Math.max(64, Math.round(value / 16) * 16);
-}
-
-/** 根据画面比例和短边分辨率计算宽高（对齐到 16 的倍数，适配大部分扩散模型） */
-export function dimensions(aspectRatio: string, short: number): { width: number; height: number } {
-  const [w, h] = aspectRatio.split(':').map(Number);
-  if (!w || !h) return { width: short, height: short };
-  return w >= h
-    ? { width: round16((short * w) / h), height: round16(short) }
-    : { width: round16(short), height: round16((short * h) / w) };
-}
-
 export function imageParams(
   aspectRatio: string,
   resolution: string,
   extra: Partial<GenParams> = {},
+  caps: Capabilities = DEFAULT_CAPABILITIES,
 ): GenParams {
-  const short = IMAGE_RESOLUTIONS.find((item) => item.value === resolution)?.short ?? 1024;
-  return { aspectRatio, resolution, ...dimensions(aspectRatio, short), count: 1, seed: null, ...extra };
+  return { aspectRatio, resolution, ...resolveSize(caps.image, aspectRatio, resolution), count: 1, seed: null, ...extra };
 }
 
+/** 视频参数：尺寸按算子能力（有原生尺寸时用原生尺寸），时长收进支持范围 */
 export function videoParams(
   aspectRatio: string,
   resolution: string,
   extra: Partial<GenParams> = {},
+  caps: Capabilities = DEFAULT_CAPABILITIES,
 ): GenParams {
-  const short = VIDEO_RESOLUTIONS.find((item) => item.value === resolution)?.short ?? 720;
-  return {
+  const params: GenParams = {
     aspectRatio,
     resolution,
-    ...dimensions(aspectRatio, short),
+    ...resolveSize(caps.video, aspectRatio, resolution),
     count: 1,
     seed: null,
     duration: 5,
     fps: 24,
     ...extra,
   };
+  if (params.duration != null) params.duration = clampDuration(caps.video, params.duration);
+  return params;
 }
 
 /** CSS aspect-ratio 字符串 */

@@ -197,6 +197,8 @@ export interface StoryData {
   visualStyle: string; // 统一画风，会拼进所有分镜提示词
   aspectRatio: string;
   outline: string; // 故事大纲（长文本）
+  /** 关键帧的负向提示词（不填用默认值） */
+  negativePrompt?: string;
   characters: Character[];
   chapters: Chapter[];
 }

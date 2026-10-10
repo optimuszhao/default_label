@@ -8,7 +8,8 @@ import { subscribe } from './bus.ts';
 import { config } from './config.ts';
 import { db, newId, now, parseJson, type Row } from './db.ts';
 import { absoluteFile, ALLOWED_UPLOAD_MIME, deleteAssetFile, saveAsset } from './files.ts';
-import { getHealth, provider } from './providers/index.ts';
+import { capabilities, getHealth, provider } from './providers/index.ts';
+import { clampDuration, resolveSize } from '../shared/operator.ts';
 import { assetUrl, getAssetRow, getTask, getTaskOwner, getUserSettings, toAsset, toTask, toUser } from './repo.ts';
 import { kickScheduler } from './scheduler.ts';
 
@@ -110,6 +111,32 @@ function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
     ts,
   );
   return getTask(id)!;
+}
+
+/**
+ * 按算子能力规整参数：去掉不起作用的参数，尺寸、时长、张数收进支持范围。
+ * 前端已经按能力隐藏了控件，这里兜底旧客户端和故事批量生成。
+ */
+function normalizeTask(input: z.infer<typeof taskSchema>): z.infer<typeof taskSchema> {
+  const caps = capabilities();
+  const video = input.type === 't2v' || input.type === 'i2v';
+  const cap = video ? caps.video : caps.image;
+  const params = { ...input.params };
+  if (!cap.strength) delete params.strength;
+  if (!cap.cfg) delete params.cfg;
+  if (!cap.steps) delete params.steps;
+  params.count = Math.min(Math.max(params.count, 1), cap.maxCount);
+  if (cap.sizes.length) Object.assign(params, resolveSize(cap, params.aspectRatio, params.resolution));
+  if (video && params.duration != null) params.duration = clampDuration(cap, params.duration);
+  const inputs = { ...input.inputs };
+  if (inputs.referenceAssetIds) inputs.referenceAssetIds = inputs.referenceAssetIds.slice(0, Math.max(caps.image.maxReferences, 0));
+  if (!caps.video.lastFrame) inputs.lastFrameAssetId = null;
+  return {
+    ...input,
+    negativePrompt: cap.negativePrompt ? input.negativePrompt : '',
+    params,
+    inputs,
+  };
 }
 
 function validateTaskInput(userId: string, input: z.infer<typeof taskSchema>): string | null {
@@ -267,6 +294,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
 
     api.post('/api/health/refresh', async () => getHealth(true));
 
+    api.get('/api/capabilities', async () => capabilities());
+
     // SSE：推送任务、资产与服务状态变化
     api.get('/api/events', (request, reply) => {
       reply.hijack();
@@ -314,7 +343,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       if (!body) return;
       const error = validateTaskInput(uid(request), body);
       if (error) return bad(reply, error);
-      const task = insertTask(uid(request), body);
+      const task = insertTask(uid(request), normalizeTask(body));
       kickScheduler();
       return task;
     });
@@ -326,7 +355,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
         const error = validateTaskInput(uid(request), item);
         if (error) return bad(reply, error);
       }
-      const tasks = body.tasks.map((item) => insertTask(uid(request), item));
+      const tasks = body.tasks.map((item) => insertTask(uid(request), normalizeTask(item)));
       kickScheduler();
       return tasks;
     });

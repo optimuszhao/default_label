@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { DEFAULT_CAPABILITIES, IMAGE_RESOLUTIONS, type Capabilities } from '../../shared/operator.ts';
 import { newTempFile } from '../files.ts';
 import { config } from '../config.ts';
 import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
@@ -442,8 +443,51 @@ function parseJobId(jobId: string): { kind: 'image' | 'video'; ids: string[] } {
 
 // ---------------- Provider ----------------
 
+/**
+ * 按接口文档声明能力：图生图只收一张参考图、没有重绘强度和 CFG；
+ * 视频时长 4–15 秒、宽高 32 的倍数、没有尾帧和负向词，输出自动 2x 超分。
+ * 16:9 的 1344×768 是文档默认值，其他比例的尺寸待朋友确认（ROADMAP §9.2 第 8 项）。
+ */
+const COMFYWEB_CAPABILITIES: Capabilities = {
+  operator: 'comfyweb',
+  image: {
+    ...DEFAULT_CAPABILITIES.image,
+    maxReferences: 1,
+    strength: false,
+    cfg: false,
+    resolutions: IMAGE_RESOLUTIONS,
+    sizeStep: 16,
+  },
+  video: {
+    maxReferences: 0,
+    firstFrame: true,
+    lastFrame: false,
+    strength: false,
+    cfg: false,
+    steps: false,
+    negativePrompt: false,
+    maxCount: 1,
+    durations: [4, 5, 6, 8, 10, 12, 15],
+    resolutions: [],
+    sizes: [
+      { aspectRatio: '16:9', width: 1344, height: 768 },
+      { aspectRatio: '9:16', width: 768, height: 1344 },
+      { aspectRatio: '1:1', width: 1024, height: 1024 },
+      { aspectRatio: '4:3', width: 1152, height: 864 },
+      { aspectRatio: '3:4', width: 864, height: 1152 },
+      { aspectRatio: '21:9', width: 1536, height: 640 },
+    ],
+    sizeStep: 32,
+    note: '输出自动 2x 超分',
+  },
+};
+
 export class ComfyWebProvider implements Provider {
   readonly name = 'comfyweb';
+
+  capabilities(): Capabilities {
+    return COMFYWEB_CAPABILITIES;
+  }
 
   async health() {
     let reachable = false;

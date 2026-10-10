@@ -1,3 +1,4 @@
+import { DEFAULT_CAPABILITIES, type Capabilities } from '../../shared/operator.ts';
 import type { ProviderHealth } from '../../shared/types.ts';
 import { config } from '../config.ts';
 import { ComfyWebProvider } from './comfyweb.ts';
@@ -17,6 +18,10 @@ function createProvider(): Provider {
 }
 
 export const provider: Provider = createProvider();
+
+export function capabilities(): Capabilities {
+  return provider.capabilities?.() ?? { ...DEFAULT_CAPABILITIES, operator: provider.name };
+}
 
 let cached: ProviderHealth | null = null;
 let inflight: Promise<ProviderHealth> | null = null;

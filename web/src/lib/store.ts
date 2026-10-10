@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_CAPABILITIES, type Capabilities } from '../../../shared/operator.ts';
 import type { Asset, ProviderHealth, ServerEvent, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
 import { api } from './api.ts';
 
@@ -21,6 +22,8 @@ interface State {
   user: User | null;
   settings: UserSettings | null;
   health: ProviderHealth | null;
+  /** 当前算子的能力声明，决定创作台显示哪些控件 */
+  capabilities: Capabilities;
   tasks: Record<string, Task>;
   assets: Record<string, Asset>;
   composerDraft: ComposerDraft | null;
@@ -29,6 +32,7 @@ interface State {
   setSession: (user: User | null, settings: UserSettings | null) => void;
   setSettings: (settings: UserSettings) => void;
   setHealth: (health: ProviderHealth) => void;
+  setCapabilities: (capabilities: Capabilities) => void;
   upsertTasks: (tasks: Task[]) => void;
   removeTask: (id: string) => void;
   upsertAssets: (assets: Asset[]) => void;
@@ -46,6 +50,7 @@ export const useStore = create<State>((set, get) => ({
   user: null,
   settings: null,
   health: null,
+  capabilities: DEFAULT_CAPABILITIES,
   tasks: {},
   assets: {},
   composerDraft: null,
@@ -55,6 +60,7 @@ export const useStore = create<State>((set, get) => ({
     set(user ? { user, settings, ready: true } : { user: null, settings: null, ready: true, tasks: {}, assets: {} }),
   setSettings: (settings) => set({ settings }),
   setHealth: (health) => set({ health }),
+  setCapabilities: (capabilities) => set({ capabilities }),
   upsertTasks: (tasks) =>
     set((state) => {
       const next = { ...state.tasks };
