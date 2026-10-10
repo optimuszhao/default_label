@@ -32,6 +32,9 @@ export const config = {
   comfyEmail: process.env.COMFY_EMAIL ?? '',
   comfyPassword: process.env.COMFY_PASSWORD ?? '',
   comfyToken: process.env.COMFY_TOKEN ?? '',
+  /** 开放平台模式：用 API ID + 密钥换取 token；配置后优先于 COMFY_EMAIL / COMFY_PASSWORD */
+  comfyAppId: process.env.COMFY_APPID ?? '',
+  comfySecret: process.env.COMFY_SECRET ?? '',
 
   /**
    * 语言模型（AI 写大纲 / 台词 / 分镜）。任何 OpenAI 兼容的 /v1/chat/completions 接口都可以，

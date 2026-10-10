@@ -30,6 +30,9 @@ services:
       GEN_API_BASE: ${GEN_API_BASE:-}
       GEN_API_KEY: ${GEN_API_KEY:-}
       # comfyweb 的登录账号（在对方服务上注册的邮箱和密码）
+      # 开放平台：API ID + 密钥换 token（配置后优先于邮箱密码）
+      COMFY_APPID: ${COMFY_APPID:-}
+      COMFY_SECRET: ${COMFY_SECRET:-}
       COMFY_EMAIL: ${COMFY_EMAIL:-}
       COMFY_PASSWORD: ${COMFY_PASSWORD:-}
       # AI 写作助手用的语言模型，任何 OpenAI 兼容接口

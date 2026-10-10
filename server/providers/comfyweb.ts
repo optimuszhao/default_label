@@ -54,16 +54,20 @@ function warnOnce(key: string, message: string, data: unknown): void {
 }
 
 async function login(): Promise<string> {
-  if (!config.comfyEmail || !config.comfyPassword) {
-    throw new ProviderUnavailableError('尚未配置 COMFY_EMAIL / COMFY_PASSWORD（生成服务账号）');
+  const useAppId = Boolean(config.comfyAppId && config.comfySecret);
+  if (!useAppId && (!config.comfyEmail || !config.comfyPassword)) {
+    throw new ProviderUnavailableError('尚未配置 COMFY_APPID / COMFY_SECRET 或 COMFY_EMAIL / COMFY_PASSWORD（生成服务账号）');
   }
+  const credentials = useAppId
+    ? { appid: config.comfyAppId, secret: config.comfySecret }
+    : { email: config.comfyEmail, password: config.comfyPassword };
   loginInflight ??= (async () => {
     let response: Response;
     try {
       response = await fetch(`${base()}/api/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: config.comfyEmail, password: config.comfyPassword }),
+        body: JSON.stringify(credentials),
         signal: AbortSignal.timeout(15_000),
       });
     } catch (error) {
@@ -292,7 +296,9 @@ async function pollOne(id: string): Promise<SubJob> {
     return { id, state: 'failed', progress: 0, files: [], error: errorText(data) ?? (data.error_message as string) ?? '生成失败' };
   }
   if (status === 'completed' || status === 'succeeded' || status === 'success' || status === 'done') {
-    const files = [...new Set(collectFiles(data))];
+    // 视频任务的 result 里同时有原片（files）和 2x 超分版（upscaled）：有超分版时只取超分版
+    const upscaled = [...new Set(collectFiles((data.result as Json | undefined)?.upscaled))];
+    const files = upscaled.length ? upscaled : [...new Set(collectFiles(data))];
     if (!files.length) warnOnce(`completed-no-files`, '任务已完成，但响应里没找到产物文件', raw);
     return { id, state: 'succeeded', progress: 1, files };
   }
