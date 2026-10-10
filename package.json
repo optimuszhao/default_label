@@ -14,7 +14,9 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx --disable-warning=ExperimentalWarning --env-file-if-exists=.env server/index.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p server/tsconfig.json",
-    "probe:comfy": "tsx --env-file-if-exists=.env scripts/probe-comfyweb.ts"
+    "probe:comfy": "tsx --env-file-if-exists=.env scripts/probe-comfyweb.ts",
+    "test": "node --disable-warning=ExperimentalWarning --import tsx --test --test-concurrency=1 'test/**/*.test.ts'",
+    "fake:operator": "tsx scripts/fake-operator.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",
