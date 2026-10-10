@@ -159,7 +159,10 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
           steps: task.params.steps ?? null,
           negativePrompt: task.negativePrompt,
           operator: operatorName,
+          templateId: task.recipe?.templateId ?? null,
+          presets: task.recipe?.presets ?? [],
         },
+        parentAssetId: task.recipe?.parentAssetId ?? null,
       });
       saved.push({ id: asset.id, file: String((db.prepare('SELECT file FROM assets WHERE id = ?').get(asset.id) as Row).file) });
     }

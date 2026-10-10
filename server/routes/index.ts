@@ -5,6 +5,7 @@ import { adminRoutes } from './admin.ts';
 import { assetRoutes } from './assets.ts';
 import { assistRoutes } from './assist.ts';
 import { authRoutes } from './auth.ts';
+import { catalogRoutes } from './catalog.ts';
 import { storyRoutes } from './stories.ts';
 import { publicSystemRoutes, systemRoutes } from './system.ts';
 import { taskRoutes } from './tasks.ts';
@@ -20,5 +21,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     await api.register(assetRoutes);
     await api.register(storyRoutes);
     await api.register(assistRoutes);
+    await api.register(catalogRoutes);
   });
 }

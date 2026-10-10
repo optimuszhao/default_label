@@ -7,6 +7,7 @@ import type { OperatorTestStep, TokenStatus } from '../../shared/types.ts';
 import { audit } from '../audit.ts';
 import { requireAdmin } from '../auth.ts';
 import { backupNow, listBackups } from '../backup.ts';
+import { allPresets, allTemplates, invalidateCatalog, templateScores } from '../catalog.ts';
 import { publish } from '../bus.ts';
 import { config } from '../config.ts';
 import { db, migration, now, type Row } from '../db.ts';
@@ -555,6 +556,147 @@ export async function adminRoutes(admin: FastifyInstance): Promise<void> {
       summary: String(row.summary),
       createdAt: Number(row.created_at),
     }));
+  });
+
+  // ---- 预设与模板（内容管理） ----
+  admin.get('/api/admin/presets', async () => allPresets());
+
+  admin.patch('/api/admin/presets/:slug', async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const body = parse(
+      z.object({
+        name: z.string().trim().min(1).max(30).optional(),
+        prompt: z.string().max(500).optional(),
+        negative: z.string().max(500).nullable().optional(),
+        fallbackPrompt: z.string().max(300).nullable().optional(),
+        hint: z.string().max(60).nullable().optional(),
+        enabled: z.boolean().optional(),
+        sort: z.number().int().optional(),
+      }),
+      request.body,
+      reply,
+    );
+    if (!body) return;
+    const current = allPresets().find((preset) => preset.slug === slug);
+    if (!current) return bad(reply, '预设不存在', 404);
+    db.prepare(
+      `UPDATE presets SET name = ?, prompt = ?, negative = ?, fallback_prompt = ?, hint = ?, enabled = ?, sort = ?, customized = 1, updated_at = ? WHERE slug = ?`,
+    ).run(
+      body.name ?? current.name,
+      body.prompt ?? current.prompt,
+      body.negative !== undefined ? body.negative : (current.negative ?? null),
+      body.fallbackPrompt !== undefined ? body.fallbackPrompt : (current.fallbackPrompt ?? null),
+      body.hint !== undefined ? body.hint : (current.hint ?? null),
+      (body.enabled ?? current.enabled) ? 1 : 0,
+      body.sort ?? current.sort,
+      now(),
+      slug,
+    );
+    invalidateCatalog();
+    audit(request, 'preset.update', slug, `${current.name}：${Object.keys(body).join('、')}`);
+    return allPresets().find((preset) => preset.slug === slug);
+  });
+
+  admin.get('/api/admin/templates', async () => {
+    const scores = templateScores();
+    return allTemplates().map((template) => ({ ...template, hot: scores.get(template.id)?.hot ?? 0, uses: scores.get(template.id)?.uses ?? 0 }));
+  });
+
+  const templateFields = {
+    name: z.string().trim().min(1).max(30),
+    category: z.string().trim().max(12),
+    description: z.string().max(80),
+    mode: z.enum(['image', 'video']),
+    body: z.string().trim().min(1).max(1000),
+    variables: z
+      .array(
+        z.object({
+          key: z.string().min(1).max(16),
+          label: z.string().min(1).max(16),
+          default: z.string().max(100).optional(),
+          placeholder: z.string().max(100).optional(),
+          options: z.array(z.string().max(30)).max(12).optional(),
+        }),
+      )
+      .max(10),
+    negative: z.string().max(500),
+    presets: z.array(z.string().max(80)).max(20),
+    params: z.object({ aspectRatio: z.string().max(10).optional(), duration: z.number().optional(), count: z.number().int().min(1).max(4).optional() }),
+    requiresReference: z.boolean(),
+    featured: z.boolean(),
+    enabled: z.boolean(),
+    sort: z.number().int(),
+    cover: z.string().max(40).nullable(),
+  };
+
+  function writeTemplate(id: string, t: z.infer<z.ZodObject<typeof templateFields>>, created: boolean): void {
+    const ts = now();
+    db.prepare(
+      `INSERT INTO prompt_templates (id, name, category, description, mode, body, variables, negative, presets, params, requires_reference, featured, cover, sort, enabled, customized, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, category = excluded.category, description = excluded.description, mode = excluded.mode,
+         body = excluded.body, variables = excluded.variables, negative = excluded.negative, presets = excluded.presets, params = excluded.params,
+         requires_reference = excluded.requires_reference, featured = excluded.featured, cover = excluded.cover, sort = excluded.sort,
+         enabled = excluded.enabled, customized = 1, updated_at = excluded.updated_at`,
+    ).run(
+      id,
+      t.name,
+      t.category,
+      t.description,
+      t.mode,
+      t.body,
+      JSON.stringify(t.variables),
+      t.negative,
+      JSON.stringify(t.presets),
+      JSON.stringify(t.params),
+      t.requiresReference ? 1 : 0,
+      t.featured ? 1 : 0,
+      t.cover,
+      t.sort,
+      t.enabled ? 1 : 0,
+      created ? ts : ts,
+      ts,
+    );
+    invalidateCatalog();
+  }
+
+  admin.post('/api/admin/templates', async (request, reply) => {
+    const body = parse(
+      z.object({
+        ...templateFields,
+        id: z.string().regex(/^[a-z0-9-]{2,40}$/, 'id 只能是小写字母、数字和横线'),
+        variables: templateFields.variables.default([]),
+        negative: templateFields.negative.default(''),
+        presets: templateFields.presets.default([]),
+        params: templateFields.params.default({}),
+        requiresReference: templateFields.requiresReference.default(false),
+        featured: templateFields.featured.default(false),
+        enabled: templateFields.enabled.default(true),
+        sort: templateFields.sort.default(999),
+        cover: templateFields.cover.default(null),
+        category: templateFields.category.default('我的'),
+        description: templateFields.description.default(''),
+      }),
+      request.body,
+      reply,
+    );
+    if (!body) return;
+    if (allTemplates().some((template) => template.id === body.id)) return bad(reply, '模板 id 已存在', 409);
+    const { id, ...fields } = body;
+    writeTemplate(id, fields, true);
+    audit(request, 'template.create', id, body.name);
+    return allTemplates().find((template) => template.id === id);
+  });
+
+  admin.patch('/api/admin/templates/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const current = allTemplates().find((template) => template.id === id);
+    if (!current) return bad(reply, '模板不存在', 404);
+    const body = parse(z.object(templateFields).partial(), request.body, reply);
+    if (!body) return;
+    writeTemplate(id, { ...current, cover: current.cover ?? null, ...body }, false);
+    audit(request, 'template.update', id, `${current.name}：${Object.keys(body).join('、')}`);
+    return allTemplates().find((template) => template.id === id);
   });
 
   // ---- 备份 ----

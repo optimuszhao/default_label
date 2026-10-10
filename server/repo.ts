@@ -41,6 +41,7 @@ export function toAsset(row: Row): Asset {
     purpose: (row.purpose as Asset['purpose']) ?? null,
     duration: row.duration == null ? null : Number(row.duration),
     gen: parseJson<Asset['gen']>(row.gen, null),
+    parentAssetId: (row.parent_asset_id as string | null) ?? null,
     favorite: Number(row.favorite) === 1,
     createdAt: Number(row.created_at),
   };
@@ -71,6 +72,7 @@ export function toTask(row: Row): Task {
     nextAttemptAt: Number(row.next_attempt_at),
     manualKick: Number(row.manual_kick) === 1,
     outputAssetIds: parseJson<string[]>(row.output_asset_ids, []),
+    recipe: parseJson<Task['recipe']>(row.recipe, null),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     startedAt: row.started_at == null ? null : Number(row.started_at),

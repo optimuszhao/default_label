@@ -1,8 +1,10 @@
 // 生成任务与队列
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { compose } from '../../shared/compose.ts';
 import { clampDuration, resolveSize } from '../../shared/operator.ts';
 import type { Task } from '../../shared/types.ts';
+import { getTemplate, presetMap, recordTemplateUse } from '../catalog.ts';
 import { config } from '../config.ts';
 import { db, newId, now, type Row } from '../db.ts';
 import { capabilities, getAdapter } from '../providers/index.ts';
@@ -29,7 +31,8 @@ const paramsSchema = z.object({
 const taskSchema = z.object({
   type: z.enum(['t2i', 'i2i', 't2v', 'i2v']),
   title: z.string().max(120).optional(),
-  prompt: z.string().trim().min(1, '请输入提示词').max(4000),
+  /** 有配方时由服务端编译，可以不传 */
+  prompt: z.string().trim().max(4000).default(''),
   negativePrompt: z.string().max(2000).default(''),
   params: paramsSchema,
   inputs: z
@@ -48,6 +51,29 @@ const taskSchema = z.object({
     .default({}),
   priority: z.number().int().min(-10).max(10).default(0),
   runNow: z.boolean().default(false),
+  recipe: z
+    .object({
+      version: z.number().int().default(1),
+      mode: z.enum(['image', 'video']),
+      text: z.string().max(4000).default(''),
+      templateId: z.string().max(80).nullable().optional(),
+      vars: z.record(z.string(), z.string().max(200)).optional(),
+      presets: z.array(z.string().max(80)).max(40).default([]),
+      negative: z.string().max(2000).default(''),
+      overrides: z
+        .object({
+          aspectRatio: z.string().max(10).optional(),
+          resolution: z.string().max(10).optional(),
+          count: z.number().int().min(1).max(4).optional(),
+          duration: z.number().min(1).max(30).optional(),
+          seed: z.number().int().nullable().optional(),
+          steps: z.number().int().min(1).max(150).optional(),
+          cameraMotion: z.string().max(60).optional(),
+        })
+        .default({}),
+      parentAssetId: z.string().max(40).nullable().optional(),
+    })
+    .optional(),
 });
 
 function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
@@ -55,8 +81,8 @@ function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
   const ts = now();
   db.prepare(
     `INSERT INTO tasks (id, user_id, type, status, title, prompt, negative_prompt, params, inputs, story_id, shot_id, purpose,
-       max_attempts, priority, next_attempt_at, manual_kick, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       max_attempts, priority, next_attempt_at, manual_kick, recipe, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     userId,
@@ -73,17 +99,44 @@ function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
     input.priority,
     0,
     input.runNow ? 1 : 0,
+    input.recipe ? JSON.stringify(input.recipe) : null,
     ts,
     ts,
   );
   return getTask(id)!;
 }
 
+type TaskInput = z.infer<typeof taskSchema>;
+
+/**
+ * 有配方时用编译器生成最终提示词和参数（和前端预览同一套逻辑，以服务端为准），
+ * 记录模板使用；返回错误文字或编译后的任务输入。
+ */
+function compileRecipe(userId: string, input: TaskInput, isAdmin: boolean): TaskInput | string {
+  const recipe = input.recipe;
+  if (!recipe) return input.prompt ? input : '请输入提示词';
+  const template = getTemplate(recipe.templateId);
+  if (recipe.templateId && !template) return '模板不存在或已下架';
+  const video = input.type === 't2v' || input.type === 'i2v';
+  if ((recipe.mode === 'video') !== video) return '配方模式和任务类型不一致';
+  if (recipe.parentAssetId && !ownsAsset(userId, recipe.parentAssetId)) return '来源素材不存在';
+  const result = compose({ recipe: { ...recipe, vars: recipe.vars ?? {} }, template, catalog: presetMap(), caps: capabilities(isAdmin) });
+  if (!result.prompt) return '请输入提示词，或选择一个模板';
+  if (template) recordTemplateUse(template.id, userId);
+  return {
+    ...input,
+    title: input.title || (template ? `${template.name} · ${result.prompt.slice(0, 24)}` : undefined),
+    prompt: result.prompt,
+    negativePrompt: result.negativePrompt,
+    params: { ...result.params, model: input.params.model },
+  };
+}
+
 /**
  * 按算子能力规整参数：去掉不起作用的参数，尺寸、时长、张数收进支持范围。
  * 前端已经按能力隐藏了控件，这里兜底旧客户端和故事批量生成。
  */
-function normalizeTask(input: z.infer<typeof taskSchema>, isAdmin = false): z.infer<typeof taskSchema> {
+function normalizeTask(input: TaskInput, isAdmin = false): TaskInput {
   const caps = capabilities(isAdmin);
   const video = input.type === 't2v' || input.type === 'i2v';
   const cap = video ? caps.video : caps.image;
@@ -163,7 +216,9 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
     if (!body) return;
     const error = validateTaskInput(uid(request), body);
     if (error) return bad(reply, error);
-    const task = insertTask(uid(request), normalizeTask(body, request.user!.isAdmin));
+    const compiled = compileRecipe(uid(request), body, request.user!.isAdmin);
+    if (typeof compiled === 'string') return bad(reply, compiled);
+    const task = insertTask(uid(request), normalizeTask(compiled, request.user!.isAdmin));
     kickScheduler();
     return task;
   });
@@ -171,11 +226,15 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
   api.post('/api/tasks/batch', async (request, reply) => {
     const body = parse(z.object({ tasks: z.array(taskSchema).min(1).max(200) }), request.body, reply);
     if (!body) return;
+    const compiled: TaskInput[] = [];
     for (const item of body.tasks) {
       const error = validateTaskInput(uid(request), item);
       if (error) return bad(reply, error);
+      const result = compileRecipe(uid(request), item, request.user!.isAdmin);
+      if (typeof result === 'string') return bad(reply, result);
+      compiled.push(result);
     }
-    const tasks = body.tasks.map((item) => insertTask(uid(request), normalizeTask(item, request.user!.isAdmin)));
+    const tasks = compiled.map((item) => insertTask(uid(request), normalizeTask(item, request.user!.isAdmin)));
     kickScheduler();
     return tasks;
   });
@@ -241,7 +300,9 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
         link: task.link,
         priority: task.priority,
         runNow: true,
-      });
+        // 再来一次：保留配方，但种子换新（锁定的种子也解除）
+        recipe: task.recipe ? { ...task.recipe, overrides: { ...task.recipe.overrides, seed: null } } : undefined,
+      } as TaskInput);
       kickScheduler();
       return copy;
     }

@@ -72,6 +72,7 @@ export interface SaveAssetInput {
   shotId?: string | null;
   purpose?: Asset['purpose'];
   gen?: GenInfo | null;
+  parentAssetId?: string | null;
 }
 
 export async function saveAsset(input: SaveAssetInput): Promise<Asset> {
@@ -94,8 +95,8 @@ export async function saveAsset(input: SaveAssetInput): Promise<Asset> {
   const gen = input.gen ? { ...input.gen, width, height, ...(probed.duration ? { duration: probed.duration } : {}) } : null;
   try {
     db.prepare(
-      `INSERT INTO assets (id, user_id, kind, source, mime, file, width, height, duration, prompt, task_id, story_id, shot_id, purpose, gen, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO assets (id, user_id, kind, source, mime, file, width, height, duration, prompt, task_id, story_id, shot_id, purpose, gen, parent_asset_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       input.userId,
@@ -112,6 +113,7 @@ export async function saveAsset(input: SaveAssetInput): Promise<Asset> {
       input.shotId ?? null,
       input.purpose ?? null,
       gen ? JSON.stringify(gen) : null,
+      input.parentAssetId ?? null,
       now(),
     );
   } catch (error) {

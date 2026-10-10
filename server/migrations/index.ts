@@ -3,5 +3,6 @@ import type { Migration } from '../migrate.ts';
 import { m0001 } from './0001_baseline.ts';
 import { m0002 } from './0002_indexes.ts';
 import { m0003 } from './0003_operators.ts';
+import { m0004 } from './0004_catalog.ts';
 
-export const MIGRATIONS: Migration[] = [m0001, m0002, m0003];
+export const MIGRATIONS: Migration[] = [m0001, m0002, m0003, m0004];

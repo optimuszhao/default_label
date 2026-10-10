@@ -1,8 +1,8 @@
 // AI 创作助手：提示词润色、故事大纲、角色、章节场次、台词、分镜。
 // http 模式下调用同事提供的 LLM 接口（要求返回 JSON）；mock 模式下返回模板化的示例，
 // 方便在没有大模型的情况下把整个创作流程走通。
+import { OFFLINE_IDEAS } from '../shared/seed.ts';
 import type { AssistKind } from '../shared/types.ts';
-import { config } from './config.ts';
 import { openAiChat } from './providers/llm.ts';
 import { useMockAssist } from './providers/index.ts';
 
@@ -38,6 +38,29 @@ function buildPrompt(kind: AssistKind, input: Dict): string {
       return `为这个场次写台词对白。character 填角色名，旁白填 "旁白"。台词要口语化、推动剧情，6~14 句。
 输入：${json}
 输出格式：{"dialogue": [{"character": "", "text": "", "emotion": ""}]}`;
+    case 'expand':
+      return `把下面的${input.mode === 'video' ? '视频' : '图片'}提示词扩写成 80~160 字。按“主体与动作 → 环境与时间 → 构图与镜头 → 光线与色彩 → 风格”的顺序组织${input.mode === 'video' ? '；视频只写 1~3 个连贯的动作' : ''}。保持原意，中文输出。
+输入：${json}
+输出格式：{"prompt": "..."}`;
+    case 'translate':
+      return `把下面的提示词翻译成${input.to === 'zh' ? '中文' : '英文'}，适合 AI 绘图模型理解。花括号里的变量（例如 {主体}）必须原样保留，不要翻译也不要删除。
+输入：${json}
+输出格式：{"prompt": "..."}`;
+    case 'variants':
+      return `基于下面的提示词写 4 个变体，每个变体只改变一个维度（例如：时间、天气、视角、风格），并说明改了哪里。
+输入：${json}
+输出格式：{"variants": [{"change": "改了什么", "prompt": "..."}]}`;
+    case 'fill':
+      return `用户想要：${str(input.idea)}。请为下面这个提示词模板的每个变量填写合适的中文取值（简短具体，每个不超过 20 字）。
+模板：${str(input.body)}
+变量：${JSON.stringify(input.variables)}
+输出格式：{"vars": {"变量名": "取值"}}`;
+    case 'motion':
+      return `这是一张静态画面的描述：${str(input.prompt)}。为把它做成 5~10 秒的视频，给出 3 个动作方案：轻微、中等、戏剧性各一个，每个写成一句可直接用于视频生成的动作描述，并从这些运镜里选一个最合适的：固定镜头、缓慢推进、缓慢拉远、左摇、右摇、环绕、跟拍、升镜头、降镜头。
+输出格式：{"motions": [{"level": "轻微", "prompt": "...", "camera": "缓慢推进"}]}`;
+    case 'inspire':
+      return `给出 4 个有画面感、适合 AI ${input.mode === 'video' ? '视频' : '绘图'}的创作点子，每个一句话，题材尽量不同。
+输出格式：{"ideas": ["..."]}`;
     case 'shots':
       return `为这个场次设计分镜，4~10 个镜头。description 写成可直接用于 AI 视频生成的画面描述（主体、动作、环境、光线），每个镜头 3~8 秒。
 shotSize 取值：远景/全景/中景/近景/特写；cameraMove 取值：固定/推/拉/摇/移/跟/环绕/升降。
@@ -61,14 +84,34 @@ function parseJsonLoose(text: string): Dict {
 
 export async function runAssist(kind: AssistKind, input: Dict): Promise<Dict> {
   if (useMockAssist()) return mockAssist(kind, input);
+  if (kind === 'translate' && typeof input.prompt === 'string') {
+    // 变量保护：翻译前把 {变量} 换成占位符，翻译后换回来，防止模型改动
+    const vars: string[] = [];
+    const masked = input.prompt.replace(/\{([^{}\s]{1,16})\}/g, (match) => `[[V${vars.push(match) - 1}]]`);
+    const result = await runAssist('translate-raw' as AssistKind, { ...input, prompt: masked });
+    const text = str(result.prompt).replace(/\[\[V(\d+)\]\]/g, (_, index: string) => vars[Number(index)] ?? '');
+    return { prompt: text };
+  }
   const content = await openAiChat(
     [
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: buildPrompt(kind, input) },
+      { role: 'user', content: buildPrompt((kind as string) === 'translate-raw' ? 'translate' : kind, input) },
     ],
-    { json: true, temperature: kind === 'polish' ? 0.6 : 0.85 },
+    { json: true, temperature: kind === 'polish' || (kind as string) === 'translate-raw' ? 0.4 : 0.85 },
   );
   return parseJsonLoose(content);
+}
+
+/** LLM 不可用时的离线灵感：从词库随机拼 */
+export function offlineInspire(mode: unknown): Dict {
+  const pickRandom = <T,>(list: T[]) => list[Math.floor(Math.random() * list.length)];
+  const ideas = Array.from({ length: 4 }, () => {
+    const subject = pickRandom(OFFLINE_IDEAS.subjects);
+    const place = pickRandom(OFFLINE_IDEAS.places);
+    const mood = pickRandom(OFFLINE_IDEAS.moods);
+    return mode === 'video' ? `${subject}在${place}${pickRandom(OFFLINE_IDEAS.actions)}，${mood}的氛围` : `${place}的${subject}，${mood}的氛围`;
+  });
+  return { ideas, offline: true };
 }
 
 // ---------------- mock ----------------
@@ -82,7 +125,47 @@ function pick<T>(list: T[], index: number): T {
 }
 
 function mockAssist(kind: AssistKind, input: Dict): Dict {
-  switch (kind) {
+  switch (kind as string) {
+    case 'expand': {
+      const base = str(input.prompt, '一座漂浮在云海之上的未来城市');
+      return {
+        prompt:
+          input.mode === 'video'
+            ? `${base}，人物缓缓转身看向远方，镜头慢慢推近；黄昏时分，远处城市灯火初亮；中景构图；暖色逆光勾勒轮廓；电影感`
+            : `${base}，位于画面中央；清晨薄雾中的城市边缘；三分法构图，低角度仰拍；柔和的侧逆光与冷暖对比；写实电影质感，细节丰富`,
+      };
+    }
+    case 'translate':
+    case 'translate-raw': {
+      const text = str(input.prompt);
+      return { prompt: input.to === 'zh' ? `（译）${text}` : `[EN] ${text}` };
+    }
+    case 'variants': {
+      const base = str(input.prompt, '海边的灯塔');
+      return {
+        variants: [
+          { change: '时间改为夜晚', prompt: `${base}，深夜，星空与月光` },
+          { change: '天气改为暴雨', prompt: `${base}，暴雨，海浪翻涌` },
+          { change: '视角改为航拍', prompt: `${base}，无人机俯拍视角` },
+          { change: '风格改为水彩', prompt: `${base}，水彩画风格` },
+        ],
+      };
+    }
+    case 'fill': {
+      const variables = Array.isArray(input.variables) ? (input.variables as { key: string; default?: string }[]) : [];
+      const idea = str(input.idea, '');
+      return { vars: Object.fromEntries(variables.map((v, index) => [v.key, index === 0 && idea ? idea.slice(0, 20) : (v.default ?? '')])) };
+    }
+    case 'motion':
+      return {
+        motions: [
+          { level: '轻微', prompt: '人物轻轻眨眼，发丝随风微动，光影缓慢变化', camera: '固定镜头' },
+          { level: '中等', prompt: '人物转头看向远处，衣摆被风吹起，背景云层流动', camera: '缓慢推进' },
+          { level: '戏剧性', prompt: '狂风骤起，人物张开双臂，周围的花瓣旋转飞舞', camera: '环绕' },
+        ],
+      };
+    case 'inspire':
+      return offlineInspire(input.mode);
     case 'polish': {
       const base = str(input.prompt, '一座漂浮在云海之上的未来城市');
       const extra =
@@ -177,5 +260,7 @@ function mockAssist(kind: AssistKind, input: Dict): Dict {
         })),
       };
     }
+    default:
+      throw new Error(`未知的助手类型：${kind}`);
   }
 }

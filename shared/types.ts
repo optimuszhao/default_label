@@ -157,6 +157,8 @@ export interface Task {
   nextAttemptAt: number;
   manualKick: boolean;
   outputAssetIds: string[];
+  /** 创作台 2.0 的配方（模板、变量、预设、用户原文），用于“改参数重跑” */
+  recipe: import('./presets.ts').Recipe | null;
   createdAt: number;
   updatedAt: number;
   startedAt: number | null;
@@ -182,6 +184,8 @@ export interface Asset {
   duration: number | null;
   /** 生成配方：实际使用的种子和参数，用于复现 */
   gen: GenInfo | null;
+  /** 派生来源（变体、以此为参考、图转视频） */
+  parentAssetId: string | null;
   createdAt: number;
 }
 
@@ -195,6 +199,9 @@ export interface GenInfo {
   steps?: number | null;
   negativePrompt?: string;
   operator: string;
+  /** 用了哪个模板和哪些预设 */
+  templateId?: string | null;
+  presets?: string[];
 }
 
 export interface ProviderHealth {
@@ -297,7 +304,15 @@ export type AssistKind =
   | 'characters' // 生成角色
   | 'chapters' // 拆分章节与场次
   | 'dialogue' // 为场次写台词
-  | 'shots'; // 为场次设计分镜
+  | 'shots' // 为场次设计分镜
+  | 'expand' // 扩写提示词
+  | 'translate' // 中英互译（保留 {变量}）
+  | 'variants' // 4 条变体，每条只改一个维度
+  | 'fill' // 一句想法填出模板全部变量
+  | 'motion' // 图转视频的动作建议（轻微 / 中等 / 戏剧性）
+  | 'inspire'; // 随机灵感
+
+export const ASSIST_KINDS: AssistKind[] = ['polish', 'outline', 'characters', 'chapters', 'dialogue', 'shots', 'expand', 'translate', 'variants', 'fill', 'motion', 'inspire'];
 
 export type ServerEvent =
   | { type: 'task'; task: Task }
