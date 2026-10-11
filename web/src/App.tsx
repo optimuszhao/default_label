@@ -15,6 +15,7 @@ const Inspire = lazy(() => import('./pages/studio/Inspire.tsx'));
 const Stories = lazy(() => import('./pages/studio/Stories.tsx'));
 const StoryEditor = lazy(() => import('./pages/studio/StoryEditor.tsx'));
 const Series = lazy(() => import('./pages/studio/Series.tsx'));
+const Print = lazy(() => import('./pages/Print.tsx'));
 const Queue = lazy(() => import('./pages/studio/Queue.tsx'));
 const Assets = lazy(() => import('./pages/studio/Assets.tsx'));
 const Settings = lazy(() => import('./pages/studio/Settings.tsx'));
@@ -73,6 +74,14 @@ export default function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Auth mode="login" />} />
           <Route path="/register" element={<Auth mode="register" />} />
+          <Route
+            path="/print/stories/:id"
+            element={
+              <RequireAuth>
+                <Print />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/studio"
             element={

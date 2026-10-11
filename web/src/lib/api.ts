@@ -264,8 +264,9 @@ export const api = {
   job: (id: string) => request<Job>('GET', `/api/jobs/${id}`),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${id}/cancel`),
 
-  stories: () => request<StorySummary[]>('GET', '/api/stories'),
-  createStory: (title: string, logline: string) => request<Story>('POST', '/api/stories', { title, logline }),
+  stories: (status?: 'active' | 'done' | 'archived' | 'trash') => request<StorySummary[]>('GET', `/api/stories${status ? `?status=${status}` : ''}`),
+  createStory: (title: string, logline: string, templateId?: string | null) => request<Story>('POST', '/api/stories', { title, logline, templateId }),
+  duplicateStory: (id: string) => request<Story>('POST', `/api/stories/${id}/duplicate`),
   story: (id: string) => request<Story>('GET', `/api/stories/${id}`),
   storyOps: (id: string, body: { baseRev: number; clientId: string; batchId: string; ops: StoryOp[] }) =>
     request<{ rev: number; ignored: { index: number; reason: string }[]; duplicate?: boolean }>('POST', `/api/stories/${id}/ops`, body),

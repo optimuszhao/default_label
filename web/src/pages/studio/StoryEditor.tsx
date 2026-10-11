@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, CloudOff, History, LayoutGrid, Loader2, Lock, Redo2, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, CloudOff, Download, History, LayoutGrid, Loader2, Lock, Redo2, Undo2 } from 'lucide-react';
 import { CompareView } from '../../components/CompareView.tsx';
 import { Button, IconButton, Spinner } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
@@ -16,7 +16,9 @@ import { PreviewTab } from './story/PreviewTab.tsx';
 import { ScriptTab } from './story/ScriptTab.tsx';
 import { SetupTab } from './story/SetupTab.tsx';
 import { ShotsTab } from './story/ShotsTab.tsx';
-import { STEPS, stepDone, storyStats, type StepId } from './story/steps.ts';
+import { stepDone, stepsFor, storyStats, type StepId } from './story/steps.ts';
+import { LayoutTab } from './story/LayoutTab.tsx';
+import { findTemplate, type StoryTemplate } from '../../../../shared/story-templates.ts';
 import { StructureTab } from './story/StructureTab.tsx';
 import { useStorySync } from './story/sync.ts';
 
@@ -33,6 +35,8 @@ export default function StoryEditor() {
   const toast = useStore((s) => s.toast);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [series, setSeries] = useState<{ id: string; title: string; episodeNo: number | null } | null>(null);
+  const [template, setTemplate] = useState<StoryTemplate | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const showSeries = async (seriesId: string | null, episodeNo: number | null) => {
     if (!seriesId) return setSeries(null);
     const list = await api.seriesList().catch(() => []);
@@ -49,7 +53,8 @@ export default function StoryEditor() {
       try {
         const story = await load();
         if (!alive || !story) return;
-        const meta = story as unknown as { lastPosition?: { tab?: string; sceneId?: string | null }; seriesId?: string | null; episodeNo?: number | null };
+        const meta = story as unknown as { lastPosition?: { tab?: string; sceneId?: string | null }; seriesId?: string | null; episodeNo?: number | null; templateId?: string | null };
+        setTemplate(findTemplate(meta.templateId));
         const position = meta.lastPosition;
         void showSeries(meta.seriesId ?? null, meta.episodeNo ?? null);
         setSceneId(position?.sceneId ?? story.data.chapters[0]?.scenes[0]?.id ?? null);
@@ -120,10 +125,11 @@ export default function StoryEditor() {
     setParams({ tab: value }, { replace: true });
     window.scrollTo({ top: 0 });
   };
-  const stepIndex = STEPS.findIndex((step) => step.id === tab);
-  const step = STEPS[stepIndex];
-  const prev = STEPS[stepIndex - 1];
-  const next = STEPS[stepIndex + 1];
+  const steps = stepsFor(template);
+  const stepIndex = steps.findIndex((step) => step.id === tab);
+  const step = steps[stepIndex] ?? (tab === 'layout' ? { id: 'layout' as const, label: '图文排版', hint: '把镜头画面排成绘本、四格漫画或条漫，导出长图或打印成 PDF。' } : undefined);
+  const prev = steps[stepIndex - 1];
+  const next = steps[stepIndex + 1];
 
   return (
     <StoryContext.Provider value={context}>
@@ -165,6 +171,34 @@ export default function StoryEditor() {
           <IconButton label="历史版本" onClick={() => setHistoryOpen(true)}>
             <History className="size-4" />
           </IconButton>
+          <div className="relative">
+            <IconButton label="导出" onClick={() => setExportOpen((v) => !v)} active={exportOpen}>
+              <Download className="size-4" />
+            </IconButton>
+            {exportOpen && (
+              <div className="glass absolute right-0 z-30 mt-1 w-52 rounded-xl border border-line-strong p-1 text-[13px] shadow-2xl" role="menu" onClick={() => setExportOpen(false)}>
+                {[
+                  ['剧本（Markdown）', `/api/stories/${id}/export/script.md`],
+                  ['剧本（纯文本）', `/api/stories/${id}/export/script.txt`],
+                  ['字幕（SRT）', `/api/stories/${id}/export/subtitles.srt`],
+                  ['字幕（ASS）', `/api/stories/${id}/export/subtitles.ass`],
+                  ['镜头表（CSV）', `/api/stories/${id}/export/shots.csv`],
+                  ['全部关键帧（ZIP）', `/api/stories/${id}/export/keyframes.zip`],
+                ].map(([label, href]) => (
+                  <a key={href} role="menuitem" href={href} className="block rounded-lg px-3 py-1.5 hover:bg-white/[0.08]">
+                    {label}
+                  </a>
+                ))}
+                <div className="my-1 h-px bg-line" />
+                <a role="menuitem" href={`/print/stories/${id}?mode=storyboard`} target="_blank" rel="noreferrer" className="block rounded-lg px-3 py-1.5 hover:bg-white/[0.08]">
+                  打印分镜表 / PDF
+                </a>
+                <button role="menuitem" onClick={() => go('layout')} className="block w-full rounded-lg px-3 py-1.5 text-left hover:bg-white/[0.08]">
+                  图文排版（绘本 / 漫画）
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {readOnly && (
@@ -207,7 +241,7 @@ export default function StoryEditor() {
               <LayoutGrid className="size-3.5" /> 总览
             </button>
             <span className="mx-1 h-4 w-px shrink-0 bg-line" />
-            {STEPS.map((item, index) => {
+            {steps.map((item, index) => {
               const done = stepDone(item.id, data, stats);
               const active = tab === item.id;
               return (
@@ -265,7 +299,8 @@ export default function StoryEditor() {
           {tab === 'characters' && <CharactersTab inSeries={Boolean(series)} />}
           {tab === 'structure' && <StructureTab onOpenScene={(sid) => go('script', sid)} />}
           {tab === 'script' && <ScriptTab onGoShots={() => go('shots')} />}
-          {tab === 'shots' && <ShotsTab />}
+          {tab === 'shots' && <ShotsTab imageOnly={Boolean(template?.imageOnly)} />}
+          {tab === 'layout' && <LayoutTab title={title} defaultKind={template?.layout ?? 'picture_book'} />}
           {tab === 'preview' && <PreviewTab />}
         </div>
 

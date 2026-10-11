@@ -212,12 +212,16 @@ export function indexAsset(...ids: string[]): void {
     const row = db
       .prepare(
         `SELECT a.seq, a.prompt, a.note, a.filename, s.title AS story_title,
-           (SELECT group_concat(t.name, ' ') FROM asset_tags at JOIN tags t ON t.id = at.tag_id WHERE at.asset_id = a.id) AS tag_names
+           (SELECT group_concat(t.name, ' ') FROM asset_tags at JOIN tags t ON t.id = at.tag_id WHERE at.asset_id = a.id) AS tag_names,
+           (SELECT sh.description || ' ' || sh.code FROM story_shots sh WHERE sh.id = a.shot_id) AS shot_text,
+           (SELECT group_concat(e.name, ' ') FROM shot_elements se JOIN story_elements e ON e.id = se.element_id WHERE se.shot_id = a.shot_id) AS element_names,
+           (SELECT group_concat(e.name, ' ') FROM entity_assets ea JOIN story_elements e ON e.id = ea.entity_id WHERE ea.asset_id = a.id) AS used_by
          FROM assets a LEFT JOIN stories s ON s.id = a.story_id WHERE a.id = ?`,
       )
       .get(id) as Row | undefined;
     if (!row || row.seq == null) continue;
-    const body = [row.prompt, row.note, row.filename, row.tag_names, row.story_title].filter(Boolean).join('\n');
+    // 资产也能按所在镜头的描述 / 编号、出镜设定名、被哪些设定用作参考图来搜（STY-18）
+    const body = [row.prompt, row.note, row.filename, row.tag_names, row.story_title, row.shot_text, row.element_names, row.used_by].filter(Boolean).join('\n');
     db.prepare('DELETE FROM assets_fts WHERE rowid = ?').run(Number(row.seq));
     db.prepare('INSERT INTO assets_fts (rowid, body) VALUES (?, ?)').run(Number(row.seq), body);
   }

@@ -44,8 +44,13 @@ export default function StudioLayout() {
       {/* 桌面侧边栏 */}
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[76px] flex-col border-r border-line bg-ink/80 backdrop-blur-xl md:flex lg:w-56">
         <Link to="/" className="flex h-14 items-center px-5">
-          <Logo className="lg:hidden" compact />
-          <Logo className="hidden lg:inline-flex" />
+          {/* 显示类放在外层：Logo 自身是 inline-flex，和 hidden 写在一起会互相覆盖 */}
+          <span className="lg:hidden">
+            <Logo compact />
+          </span>
+          <span className="hidden lg:block">
+            <Logo />
+          </span>
         </Link>
         <nav className="mt-2 flex flex-1 flex-col gap-1 px-3">
           {NAV.map((item) => (

@@ -5,9 +5,14 @@ import type { StoryData, StorySnapshot, StorySummary } from '../../shared/types.
 import type { StoryOp } from '../../shared/story-ops.ts';
 import { publish } from '../bus.ts';
 import { db, newId, now, parseJson, type Row } from '../db.ts';
+import { indexAsset } from '../files.ts';
 import { assetUrl, toAssets } from '../repo.ts';
 import { planBatch, runBatch, type BatchRequest } from '../stories/batch.ts';
+import { ass, keyframeEntries, scriptMarkdown, scriptText, shotsCsv, srt } from '../stories/export.ts';
 import { migrateStory } from '../stories/migrate.ts';
+import { PassThrough } from 'node:stream';
+import { writeZip } from '../media/zip.ts';
+import { STORY_TEMPLATES, findTemplate } from '../../shared/story-templates.ts';
 import { applyOps, defaultData, loadStory, pruneSnapshots, snapshotStory, writeStory } from '../stories/store.ts';
 import { bad, parse, uid } from './common.ts';
 
@@ -136,11 +141,26 @@ export function commitOps(storyId: string, userId: string, ops: StoryOp[], clien
     if (rev % 100 === 0) db.prepare('DELETE FROM story_revisions WHERE story_id = ? AND rev <= ?').run(storyId, rev - MAX_REVISIONS);
     db.exec('COMMIT');
     publish(userId, { type: 'story-rev', storyId, rev, clientId });
+    reindexShotAssets(storyId, ops);
     return { rev, ignored: result.ignored };
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
   }
+}
+
+/** 镜头描述、编号、出镜设定、设定名或参考图变了：相关素材的全文索引跟着更新 */
+function reindexShotAssets(storyId: string, ops: StoryOp[]): void {
+  const shotIds = new Set<string>();
+  const elementIds = new Set<string>();
+  for (const op of ops) {
+    if (op.op === 'set' && op.entity === 'shot' && ['description', 'code', 'characterIds', 'elementIds'].some((f) => f in op.patch)) shotIds.add(op.id);
+    if (op.op === 'set' && (op.entity === 'character' || op.entity === 'element') && ['name', 'referenceAssetId', 'refs'].some((f) => f in op.patch)) elementIds.add(op.id);
+  }
+  const ids = new Set<string>();
+  for (const shotId of shotIds) for (const row of db.prepare('SELECT id FROM assets WHERE story_id = ? AND shot_id = ?').all(storyId, shotId) as Row[]) ids.add(String(row.id));
+  for (const elementId of elementIds) for (const row of db.prepare("SELECT asset_id FROM entity_assets WHERE entity_type = 'element' AND entity_id = ?").all(elementId) as Row[]) ids.add(String(row.asset_id));
+  if (ids.size && ids.size <= 2000) indexAsset(...ids);
 }
 
 function toSnapshot(row: Row): StorySnapshot {
@@ -179,11 +199,128 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
     return rows.map((row) => storySummary(row, covers));
   });
 
+  api.get('/api/story-templates', async () => STORY_TEMPLATES);
+
+  /** 新建故事：可选一个模板（比例、画风、基调、章节场次骨架） */
   api.post('/api/stories', async (request, reply) => {
-    const body = parse(z.object({ title: z.string().trim().min(1).max(80), logline: z.string().max(500).default('') }), request.body, reply);
+    const body = parse(z.object({ title: z.string().trim().min(1).max(80), logline: z.string().max(500).default(''), templateId: z.string().max(40).nullable().optional() }), request.body, reply);
     if (!body) return;
-    const id = createStory(uid(request), body.title, defaultData(body.logline));
+    const template = findTemplate(body.templateId);
+    if (body.templateId && !template) return bad(reply, '模板不存在');
+    const data = defaultData(body.logline);
+    if (template) {
+      Object.assign(data, template.settings);
+      const fresh = (prefix: string) => `${prefix}${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+      data.chapters = template.skeleton.map((chapter) => ({
+        id: fresh('ch_'),
+        title: chapter.title,
+        summary: chapter.summary ?? '',
+        scenes: chapter.scenes.map((scene) => ({ id: fresh('sc_'), title: scene.title, location: '', time: '', summary: scene.summary ?? '', dialogue: [], shots: [] })),
+      }));
+    }
+    const id = createStory(uid(request), body.title, data, { templateId: template?.id ?? null });
     return openStory(db.prepare('SELECT * FROM stories WHERE id = ?').get(id) as Row);
+  });
+
+  /** 复制故事：结构、设定、台词、镜头全部复制（换新 id），选定的画面沿用原素材 */
+  api.post('/api/stories/:id/duplicate', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const { title, data } = loadStory(id);
+    const map = new Map<string, string>();
+    const fresh = (old: string, prefix: string) => {
+      const next = `${prefix}${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+      map.set(old, next);
+      return next;
+    };
+    // 系列共享的设定不复制（新故事不在系列里，会变成普通设定）
+    const copy = structuredClone(data);
+    copy.characters = copy.characters.map((c) => ({ ...c, id: fresh(c.id, 'c_'), seriesShared: undefined }));
+    copy.elements = (copy.elements ?? []).map((e) => ({ ...e, id: fresh(e.id, 'e_'), seriesShared: undefined }));
+    for (const chapter of copy.chapters) {
+      chapter.id = fresh(chapter.id, 'ch_');
+      for (const scene of chapter.scenes) {
+        scene.id = fresh(scene.id, 'sc_');
+        for (const line of scene.dialogue) line.id = fresh(line.id, 'd_');
+        for (const shot of scene.shots) shot.id = fresh(shot.id, 'sh_');
+      }
+    }
+    const remap = (value: string | null | undefined) => (value ? (map.get(value) ?? value) : value);
+    for (const chapter of copy.chapters) {
+      for (const scene of chapter.scenes) {
+        scene.locationId = remap(scene.locationId) ?? null;
+        for (const line of scene.dialogue) line.characterId = remap(line.characterId) ?? null;
+        for (const shot of scene.shots) {
+          shot.characterIds = shot.characterIds.map((x) => remap(x)!);
+          shot.elementIds = shot.elementIds?.map((x) => remap(x)!);
+          shot.dialogueIds = shot.dialogueIds.map((x) => remap(x)!);
+          shot.locked = undefined;
+        }
+      }
+    }
+    const newId = createStory(uid(request), `${title} 副本`.slice(0, 80), copy, { templateId: (row.template_id as string | null) ?? null });
+    return openStory(db.prepare('SELECT * FROM stories WHERE id = ?').get(newId) as Row);
+  });
+
+  /** 导出：script.md / script.txt / subtitles.srt / subtitles.ass / shots.csv / keyframes.zip */
+  api.get('/api/stories/:id/export/:format', async (request, reply) => {
+    const { id, format } = request.params as { id: string; format: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    const { title, data } = Number(row.schema) === 2 ? loadStory(id) : { title: String(row.title), data: parseJson<StoryData>(row.data, defaultData()) };
+    const base = title.replace(/[\\/:*?"<>|]/g, '_');
+    const send = (name: string, type: string, body: string) => {
+      reply.header('content-type', `${type}; charset=utf-8`);
+      reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+      return reply.send(body);
+    };
+    switch (format) {
+      case 'script.md':
+        return send(`${base}-剧本.md`, 'text/markdown', scriptMarkdown(title, data));
+      case 'script.txt':
+        return send(`${base}-剧本.txt`, 'text/plain', scriptText(title, data));
+      case 'subtitles.srt':
+        return send(`${base}.srt`, 'application/x-subrip', srt(data));
+      case 'subtitles.ass':
+        return send(`${base}.ass`, 'text/plain', ass(title, data));
+      case 'shots.csv':
+        return send(`${base}-镜头表.csv`, 'text/csv', shotsCsv(data));
+      case 'keyframes.zip': {
+        if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+        const stream = new PassThrough();
+        void writeZip(keyframeEntries(id, title, data), stream).then(() => stream.end(), (error) => stream.destroy(error as Error));
+        reply.header('content-type', 'application/zip');
+        reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${base}-关键帧.zip`)}`);
+        return reply.send(stream);
+      }
+      default:
+        return bad(reply, '不支持的导出格式', 404);
+    }
+  });
+
+  /** 图文排版（绘本 / 四格 / 条漫）：每种版式一份，整份保存 */
+  api.get('/api/stories/:id/layouts', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    const rows = db.prepare('SELECT * FROM story_layouts WHERE story_id = ? ORDER BY updated_at DESC').all(id) as Row[];
+    return rows.map((r) => ({ id: String(r.id), kind: String(r.kind), title: String(r.title), pages: parseJson(r.pages, []), updatedAt: Number(r.updated_at) }));
+  });
+
+  api.put('/api/stories/:id/layouts/:kind', async (request, reply) => {
+    const { id, kind } = request.params as { id: string; kind: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    if (!['picture_book', 'four_panel', 'webtoon'].includes(kind)) return bad(reply, '不支持的版式');
+    const body = parse(z.object({ title: z.string().max(80).default(''), pages: z.array(z.record(z.string(), z.unknown())).max(2000) }), request.body, reply);
+    if (!body) return;
+    const json = JSON.stringify(body.pages);
+    if (json.length > 2_000_000) return bad(reply, '版式内容过大');
+    db.prepare(
+      `INSERT INTO story_layouts (id, story_id, kind, title, pages, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET title = excluded.title, pages = excluded.pages, updated_at = excluded.updated_at`,
+    ).run(`${id}:${kind}`, id, kind, body.title, json, now());
+    return { ok: true };
   });
 
   api.get('/api/stories/:id', async (request, reply) => {

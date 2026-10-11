@@ -81,3 +81,68 @@ test('STY-07 设定库：角色、地点、道具分区；STY-17 系列看板和
   if (!isMobile) await expect(page.getByRole('link', { name: /回声之城 · 第 1 集/ })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '故事名称' })).toHaveValue('第 1 集');
 });
+
+test('STY-11 分镜表格：切到表格视图，从 Excel 粘贴几行变成镜头', async ({ page }) => {
+  await register(page);
+  const id = await seedStory(page);
+  await page.goto(`/studio/stories/${id}?tab=shots`);
+  await page.getByRole('tablist', { name: '分镜视图' }).getByRole('tab', { name: '表格' }).click();
+  const table = page.getByLabel('分镜表格');
+  await expect(table.getByText('共 2 个镜头')).toBeVisible();
+  await table.evaluate((el) => {
+    const data = new DataTransfer();
+    data.setData('text/plain', '景别\t运镜\t时长\t画面描述\n近景\t推\t3\t林昔的眼睛反射着霓虹\n特写\t固定\t2\t雨滴落在收音机上\n');
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+  });
+  await expect(table.getByText('共 4 个镜头')).toBeVisible();
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
+  const story = await (await page.request.get(`/api/stories/${id}`)).json();
+  const shots = story.data.chapters[0].scenes[0].shots;
+  expect(shots.at(-1).description).toBe('雨滴落在收音机上');
+  expect(shots.at(-2).shotSize).toBe('近景');
+});
+
+test('STY-12 绘本模板：没有成片步骤，换成图文排版；EXP-07 自动排版并导出长图；STY-13 列表里复制和归档', async ({ page, isMobile }) => {
+  await register(page);
+  await page.goto('/studio/stories');
+  await page.getByRole('button', { name: '新建故事' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /儿童绘本/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '创建并开始' }).click();
+  await expect(page).toHaveURL(/\/studio\/stories\/s_/);
+  const nav = page.getByRole('navigation', { name: '创作步骤' });
+  await expect(nav.getByRole('button', { name: /图文排版/ })).toBeVisible();
+  await expect(nav.getByRole('button', { name: /成片/ })).toHaveCount(0);
+  const id = page.url().split('/stories/')[1].split('?')[0];
+
+  // 加一个镜头再排版
+  const story = await (await page.request.get(`/api/stories/${id}`)).json();
+  const sceneId = story.data.chapters[0].scenes[0].id;
+  await page.request.post(`/api/stories/${id}/ops`, {
+    data: { ops: [{ op: 'create', entity: 'shot', id: `sh_pb${Date.now()}`, parentId: sceneId, sortKey: 'i', value: { shotSize: '全景', cameraMove: '固定', description: '小兔子在草地上', duration: 5 } }] },
+  });
+  await page.goto(`/studio/stories/${id}?tab=layout`);
+  await page.getByRole('button', { name: '按分镜自动排版' }).click();
+  await expect(page.getByRole('textbox', { name: '绘本文字' }).first()).toBeVisible();
+  if (!isMobile) {
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: '导出长图' }).click();
+    expect((await download).suggestedFilename()).toMatch(/绘本\.png$/);
+  }
+  await expect.poll(async () => (await (await page.request.get(`/api/stories/${id}/layouts`)).json()).length).toBe(1);
+
+  // 打印视图
+  await page.goto(`/print/stories/${id}?mode=storyboard`);
+  await expect(page.getByText('分镜表 · 1 个镜头')).toBeVisible();
+
+  // 列表：复制、归档
+  await page.goto('/studio/stories');
+  await page.getByRole('button', { name: '更多操作' }).first().click();
+  await page.getByRole('menuitem', { name: '复制故事' }).click();
+  await expect(page).toHaveURL(/\/studio\/stories\/s_/);
+  await page.goto('/studio/stories');
+  await expect(page.getByText(/副本/)).toBeVisible();
+  await page.getByRole('button', { name: '更多操作' }).first().click();
+  await page.getByRole('menuitem', { name: '归档' }).click();
+  await page.getByRole('tablist', { name: '故事状态' }).getByRole('tab', { name: '已归档' }).click();
+  await expect(page.getByRole('link').filter({ hasText: /儿童绘本/ })).toHaveCount(1);
+});

@@ -10,6 +10,8 @@ import { EMPTY_MEDIA } from './model.ts';
 import { ProgressBoard } from './ProgressBoard.tsx';
 import { nextStep, STEPS, stepDone, storyStats, type StepId } from './steps.ts';
 
+// 总览里的步骤清单按通用步骤显示；模板专属的排版步骤在步骤条里
+
 type Go = (step: StepId, sceneId?: string) => void;
 
 function Stat({ label, value, total, icon }: { label: string; value: number | string; total?: number; icon: React.ReactNode }) {

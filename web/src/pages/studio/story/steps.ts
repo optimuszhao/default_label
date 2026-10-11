@@ -1,7 +1,7 @@
 import type { StoryData } from '../../../../../shared/types.ts';
 import { flattenShots, type ShotMedia } from './model.ts';
 
-export type StepId = 'overview' | 'setup' | 'characters' | 'structure' | 'script' | 'shots' | 'preview';
+export type StepId = 'overview' | 'setup' | 'characters' | 'structure' | 'script' | 'shots' | 'preview' | 'layout';
 
 export interface StepInfo {
   id: Exclude<StepId, 'overview'>;
@@ -18,6 +18,15 @@ export const STEPS: StepInfo[] = [
   { id: 'shots', label: '分镜', hint: '为每场设计镜头：景别、运镜、时长，再生成关键帧和视频。' },
   { id: 'preview', label: '成片', hint: '按顺序串联所有镜头预览整部作品，一键补齐缺失的画面。' },
 ];
+
+export const LAYOUT_STEP: StepInfo = { id: 'layout', label: '图文排版', hint: '把镜头画面排成绘本、四格漫画或条漫，导出长图或打印成 PDF。' };
+
+/** 按故事模板决定步骤：只出图的模板（绘本）没有成片，换成图文排版；带版式的模板在最后加上排版 */
+export function stepsFor(template: { imageOnly?: boolean; layout?: string } | null): StepInfo[] {
+  if (template?.imageOnly) return [...STEPS.filter((step) => step.id !== 'preview'), LAYOUT_STEP];
+  if (template?.layout) return [...STEPS, LAYOUT_STEP];
+  return STEPS;
+}
 
 export interface StoryStats {
   chapters: number;
@@ -58,10 +67,12 @@ export function stepDone(id: StepInfo['id'], data: StoryData, stats: StoryStats)
       return scenes.length > 0 && scenes.every((s) => s.shots.length > 0);
     case 'preview':
       return stats.shots > 0 && stats.videos === stats.shots;
+    case 'layout':
+      return false;
   }
 }
 
 /** 第一个还没完成的步骤，用于“继续创作”引导 */
-export function nextStep(data: StoryData, stats: StoryStats): StepInfo | null {
-  return STEPS.find((step) => !stepDone(step.id, data, stats)) ?? null;
+export function nextStep(data: StoryData, stats: StoryStats, steps: StepInfo[] = STEPS): StepInfo | null {
+  return steps.find((step) => !stepDone(step.id, data, stats)) ?? null;
 }

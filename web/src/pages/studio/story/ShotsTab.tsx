@@ -30,6 +30,7 @@ import { useCompare } from '../create/derive.ts';
 import { useShotGenerator, useStory } from './context.tsx';
 import { EMPTY_MEDIA, findScene, moveItem, newShot, updateScene, updateShot } from './model.ts';
 import { SceneNavigator } from './SceneNavigator.tsx';
+import { ShotsTable } from './ShotsTable.tsx';
 import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 const ELEMENT_KIND_LABEL = { location: '地点', prop: '道具', style: '画风' } as const;
@@ -161,7 +162,7 @@ export function PromptPreview({ data, scene, shot }: { data: StoryData; scene: S
   );
 }
 
-const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen }: { scene: Scene; shot: Shot; index: number; onOpen: (asset: Asset) => void }) {
+const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly = false }: { scene: Scene; shot: Shot; index: number; onOpen: (asset: Asset) => void; imageOnly?: boolean }) {
   const { storyId, data, update, media } = useStory();
   const generator = useShotGenerator();
   const upsertAssets = useStore((s) => s.upsertAssets);
@@ -307,9 +308,9 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen }: { scene:
         </div>
 
         <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <MediaSlot label="关键帧" asset={m.keyframe} task={m.keyframeTask} ratio={data.aspectRatio} icon={<ImageIcon className="size-5" />} onOpen={onOpen} />
-            <MediaSlot label="视频" asset={m.video} task={m.videoTask} ratio={data.aspectRatio} icon={<Film className="size-5" />} onOpen={onOpen} />
+          <div className={cx('grid gap-2', imageOnly ? 'grid-cols-1' : 'grid-cols-2')}>
+            <MediaSlot label={imageOnly ? '画面' : '关键帧'} asset={m.keyframe} task={m.keyframeTask} ratio={data.aspectRatio} icon={<ImageIcon className="size-5" />} onOpen={onOpen} />
+            {!imageOnly && <MediaSlot label="视频" asset={m.video} task={m.videoTask} ratio={data.aspectRatio} icon={<Film className="size-5" />} onOpen={onOpen} />}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-wrap gap-1">
@@ -320,9 +321,9 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen }: { scene:
                 <ImagePlus className="size-4" />
               </IconButton>
             </div>
-            <Button size="sm" variant={m.keyframe ? 'brand' : 'secondary'} icon={<Clapperboard className="size-3.5" />} disabled={!prompting || Boolean(m.videoTask)} onClick={() => void generator.video(scene, shot)}>
+            {!imageOnly && <Button size="sm" variant={m.keyframe ? 'brand' : 'secondary'} icon={<Clapperboard className="size-3.5" />} disabled={!prompting || Boolean(m.videoTask)} onClick={() => void generator.video(scene, shot)}>
               {shot.firstFrame?.mode === 'prev_last' ? '接续上一镜' : m.keyframe || shot.firstFrame?.mode === 'asset' ? '图生视频' : '文生视频'}
-            </Button>
+            </Button>}
           </div>
           {m.keyframes.length + m.videos.length > 0 && (
             <div>
@@ -432,7 +433,54 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen }: { scene:
   );
 });
 
-export function ShotsTab() {
+/** 卡片 / 表格两种视图，记在本机 */
+function useShotsView(): ['cards' | 'table', (view: 'cards' | 'table') => void] {
+  const [view, setView] = useState<'cards' | 'table'>(() => {
+    try {
+      return localStorage.getItem('weave:shots-view') === 'table' ? 'table' : 'cards';
+    } catch {
+      return 'cards';
+    }
+  });
+  return [
+    view,
+    (next) => {
+      setView(next);
+      try {
+        localStorage.setItem('weave:shots-view', next);
+      } catch {
+        // 隐私模式下记不住，无所谓
+      }
+    },
+  ];
+}
+
+export function ShotsTab({ imageOnly = false }: { imageOnly?: boolean }) {
+  const [view, setView] = useShotsView();
+  const toggle = (
+    <Segmented
+      size="sm"
+      value={view}
+      onChange={setView}
+      label="分镜视图"
+      options={[
+        { value: 'cards', label: '卡片' },
+        { value: 'table', label: '表格' },
+      ]}
+    />
+  );
+  if (view === 'table') {
+    return (
+      <div className="space-y-3">
+        <div className="flex justify-end">{toggle}</div>
+        <ShotsTable />
+      </div>
+    );
+  }
+  return <ShotsCards toggle={toggle} imageOnly={imageOnly} />;
+}
+
+function ShotsCards({ toggle, imageOnly }: { toggle: React.ReactNode; imageOnly: boolean }) {
   const { storyId, data, update, sceneId, flushNow } = useStory();
   const generator = useShotGenerator();
   const compare = useCompare();
@@ -498,7 +546,8 @@ export function ShotsTab() {
                 {found.chapter.title} · {items.length} 个镜头 · {total} 秒 · 定稿 {items.filter((s) => s.locked).length}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {toggle}
               {compare.ids.length > 0 && (
                 <Button size="sm" variant="ghost" icon={<Columns2 className="size-3.5" />} onClick={() => compare.setOpen(true)}>
                   对比（{compare.ids.length}）
@@ -514,7 +563,7 @@ export function ShotsTab() {
           </div>
 
           {found.scene.shots.map((shot, index) => (
-            <ShotCard key={shot.id} scene={found.scene} shot={shot} index={index} onOpen={setViewing} />
+            <ShotCard key={shot.id} scene={found.scene} shot={shot} index={index} onOpen={setViewing} imageOnly={imageOnly} />
           ))}
 
           <button
