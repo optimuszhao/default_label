@@ -3,6 +3,7 @@
 // 左右方向键 / 按钮切换同一列表里的上一个、下一个。
 import { useEffect, useState } from 'react';
 import {
+  BookPlus,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -26,6 +27,7 @@ import { useCompare, useDerive } from '../pages/studio/create/derive.ts';
 import { api } from '../lib/api.ts';
 import { reportError, useStore } from '../lib/store.ts';
 import { cx, downloadUrl, timeAgo } from '../lib/util.ts';
+import { AddToStoryDialog } from './AddToStoryDialog.tsx';
 import { confirmDialog } from './ConfirmDialog.tsx';
 import { Button, IconButton, Media, Modal, isVideoAsset } from './ui.tsx';
 
@@ -157,6 +159,7 @@ export function AssetViewer({
 }) {
   const [current, setCurrent] = useState<Asset | null>(asset);
   const [motionFor, setMotionFor] = useState<Asset | null>(null);
+  const [addTo, setAddTo] = useState<Asset | null>(null);
   const tasks = useStore((s) => s.tasks);
   const assets = useStore((s) => s.assets);
   const upsertAssets = useStore((s) => s.upsertAssets);
@@ -357,6 +360,11 @@ export function AssetViewer({
                 <Save className="size-4" />
               </IconButton>
             )}
+            {live.kind !== 'audio' && (
+              <IconButton label="加入故事镜头" onClick={() => setAddTo(live)}>
+                <BookPlus className="size-4" />
+              </IconButton>
+            )}
             <IconButton label={compare.ids.includes(live.id) ? '移出对比' : '加入对比'} onClick={() => compare.toggle(live.id)}>
               <Columns2 className={cx('size-4', compare.ids.includes(live.id) && 'text-accent')} />
             </IconButton>
@@ -368,6 +376,7 @@ export function AssetViewer({
         </aside>
       </div>
       <MotionSheet asset={motionFor} onClose={() => setMotionFor(null)} />
+      <AddToStoryDialog asset={addTo} onClose={() => setAddTo(null)} />
     </Modal>
   );
 }

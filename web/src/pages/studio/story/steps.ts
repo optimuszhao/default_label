@@ -12,7 +12,7 @@ export interface StepInfo {
 /** 六个创作步骤，按顺序引导用户把故事一步步搭起来 */
 export const STEPS: StepInfo[] = [
   { id: 'setup', label: '设定与大纲', hint: '写下一句话故事，选好类型和画风，让 AI 扩写成完整大纲。' },
-  { id: 'characters', label: '角色', hint: '设计主要角色。外貌描述和定妆照会自动用于每个镜头，保持角色一致。' },
+  { id: 'characters', label: '设定库', hint: '角色、地点、道具、画风。描述和参考图会自动用于每个镜头，保持全片一致。' },
   { id: 'structure', label: '章节场次', hint: '把大纲拆成章节和场次。长篇故事可以分多次追加，结构随时调整。' },
   { id: 'script', label: '剧本台词', hint: '逐场写剧情和对白，标注情绪。可以让 AI 先写一版再修改。' },
   { id: 'shots', label: '分镜', hint: '为每场设计镜头：景别、运镜、时长，再生成关键帧和视频。' },

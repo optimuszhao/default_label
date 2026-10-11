@@ -55,6 +55,7 @@ const schema = z
     llmApiKey: z.string(),
     llmModel: z.string(),
     mockFlaky: z.boolean(),
+    llmMock: z.boolean(),
     schedulerTickMs: intIn('SCHEDULER_TICK_MS', 50, 60_000, 2000),
     healthTtlMs: intIn('HEALTH_TTL_MS', 100, 600_000, 10000),
     maxRunning: intIn('MAX_RUNNING', 1, 32, 2),
@@ -68,6 +69,9 @@ const schema = z
     maxUploadMb: intIn('MAX_UPLOAD_MB', 1, 2048, 20),
     uploadMaxMb: intIn('UPLOAD_MAX_MB', 1, 20480, 2048),
     trashDays: intIn('TRASH_DAYS', 1, 3650, 30),
+    idleWindow: z
+      .string()
+      .refine((value) => /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/.test(value), 'IDLE_WINDOW 格式应为 HH:mm-HH:mm，例如 01:00-07:00'),
     ttsApiBase: httpUrl('TTS_API_BASE'),
     ttsApiKey: z.string(),
     ttsModel: z.string(),
@@ -124,6 +128,8 @@ const raw = {
   llmModel: blank(env.LLM_MODEL) ?? '',
   /** mock 模式下模拟服务时好时坏 */
   mockFlaky: env.MOCK_FLAKY === '1',
+  /** 没有语言模型时用模板化的模拟写作助手（先体验故事流程，效果不代表真实模型） */
+  llmMock: env.LLM_MOCK === '1',
   schedulerTickMs: env.SCHEDULER_TICK_MS,
   healthTtlMs: env.HEALTH_TTL_MS,
   /** 同时提交给生成服务的任务数；对方在 ComfyUI 内部排队，2 可以让图片不必等长视频 */
@@ -147,6 +153,8 @@ const raw = {
   uploadMaxMb: env.UPLOAD_MAX_MB,
   /** 回收站保留天数，到期自动彻底删除 */
   trashDays: env.TRASH_DAYS,
+  /** 闲时时段：批量生成勾选"闲时生成"后，任务在这个时段才开始派发 */
+  idleWindow: blank(env.IDLE_WINDOW) ?? '01:00-07:00',
   /** 配音（TTS）：任何 OpenAI 兼容的 /v1/audio/speech 接口；不配置时用模拟配音 */
   ttsApiBase: blank(env.TTS_API_BASE) ?? '',
   ttsApiKey: blank(env.TTS_API_KEY) ?? '',

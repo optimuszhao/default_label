@@ -45,7 +45,7 @@ export async function assistRoutes(api: FastifyInstance): Promise<void> {
     if (!allow(uid(request))) return bad(reply, 'AI 助手调用太频繁了，请过几分钟再试（每 10 分钟最多 30 次）', 429);
 
     // 故事里的 AI 改写会替换已有内容：先留一份历史版本
-    if (typeof storyId === 'string' && ['outline', 'characters', 'chapters', 'dialogue', 'shots'].includes(kind)) {
+    if (typeof storyId === 'string' && ['outline', 'characters', 'chapters', 'dialogue', 'shots', 'split', 'extract'].includes(kind)) {
       const story = ownedStory(request, storyId);
       if (story) snapshotStory(String(story.id), `ai:${kind}`);
     }

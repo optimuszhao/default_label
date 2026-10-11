@@ -39,6 +39,9 @@ services:
       LLM_API_BASE: ${LLM_API_BASE:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      LLM_MOCK: ${LLM_MOCK:-}
+      IDLE_WINDOW: ${IDLE_WINDOW:-01:00-07:00}
+      TRASH_DAYS: ${TRASH_DAYS:-30}
       # 同时提交的任务数，对方在 ComfyUI 里排队；视频超时默认 90 分钟
       MAX_RUNNING: ${MAX_RUNNING:-2}
       VIDEO_JOB_TIMEOUT_MS: ${VIDEO_JOB_TIMEOUT_MS:-5400000}

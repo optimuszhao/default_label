@@ -401,6 +401,8 @@ export interface Scene {
   id: string;
   title: string;
   location: string;
+  /** 关联的地点设定（描述会拼进提示词） */
+  locationId?: string | null;
   time: string;
   summary: string; // 剧本段落
   dialogue: DialogueLine[];
@@ -480,9 +482,13 @@ export type AssistKind =
   | 'variants' // 4 条变体，每条只改一个维度
   | 'fill' // 一句想法填出模板全部变量
   | 'motion' // 图转视频的动作建议（轻微 / 中等 / 戏剧性）
-  | 'inspire'; // 随机灵感
+  | 'inspire' // 随机灵感
+  | 'recap' // 章节前情提要
+  | 'extract' // 从剧本里提取角色、地点、道具
+  | 'split' // 把原著长文拆成章节
+  | 'split_shots'; // 一句话拆成几个镜头（工作流用）
 
-export const ASSIST_KINDS: AssistKind[] = ['polish', 'outline', 'characters', 'chapters', 'dialogue', 'shots', 'expand', 'translate', 'variants', 'fill', 'motion', 'inspire'];
+export const ASSIST_KINDS: AssistKind[] = ['polish', 'outline', 'characters', 'chapters', 'dialogue', 'shots', 'expand', 'translate', 'variants', 'fill', 'motion', 'inspire', 'recap', 'extract', 'split', 'split_shots'];
 
 export type ServerEvent =
   | { type: 'task'; task: Task }

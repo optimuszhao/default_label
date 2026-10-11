@@ -61,6 +61,22 @@ function buildPrompt(kind: AssistKind, input: Dict): string {
     case 'inspire':
       return `给出 4 个有画面感、适合 AI ${input.mode === 'video' ? '视频' : '绘图'}的创作点子，每个一句话，题材尽量不同。
 输出格式：{"ideas": ["..."]}`;
+    case 'recap':
+      return `为这一章写一段前情提要（150~300 字），交代到本章结束时的人物处境、关键事件和悬念，给后面的章节当上下文。previous 是之前各章（或上一集）的提要。
+输入：${json}
+输出格式：{"recap": "..."}`;
+    case 'extract':
+      return `从下面的剧本里提取设定：角色（appearance 写成可直接用于 AI 绘图的外貌描述）、地点（snippet 写环境描述）、关键道具（snippet 写外观描述）。只提取剧本里明确出现的。
+输入：${json}
+输出格式：{"characters": [{"name": "", "role": "", "appearance": ""}], "locations": [{"name": "", "snippet": ""}], "props": [{"name": "", "snippet": ""}]}`;
+    case 'split':
+      return `把下面的原著长文拆成 ${input.chapterCount ?? '合适数量的'} 个章节。每章给出标题、梗概（100~200 字），以及这一章在原文中开头的一句话（firstSentence，必须原样摘自原文）。
+输入：${json}
+输出格式：{"chapters": [{"title": "", "summary": "", "firstSentence": ""}]}`;
+    case 'split_shots':
+      return `把这个想法拆成 ${input.count ?? 4} 个连贯的镜头，组成一个短片。每个镜头写画面描述（可直接用于 AI 绘图）和动作描述（可直接用于图生视频），时长 4~8 秒。
+输入：${json}
+输出格式：{"shots": [{"description": "", "motion": "", "duration": 5}]}`;
     case 'shots':
       return `为这个场次设计分镜，4~10 个镜头。description 写成可直接用于 AI 视频生成的画面描述（主体、动作、环境、光线），每个镜头 3~8 秒。
 shotSize 取值：远景/全景/中景/近景/特写；cameraMove 取值：固定/推/拉/摇/移/跟/环绕/升降。
@@ -82,7 +98,17 @@ function parseJsonLoose(text: string): Dict {
   }
 }
 
-export async function runAssist(kind: AssistKind, input: Dict): Promise<Dict> {
+/** 长文本类输入截断，控制上下文在约 6000 token 以内 */
+function clip(kind: AssistKind, input: Dict): Dict {
+  const out = { ...input };
+  if (kind === 'split' && typeof out.source === 'string') out.source = out.source.slice(0, 12_000);
+  if (kind === 'extract' && typeof out.script === 'string') out.script = out.script.slice(0, 10_000);
+  if (kind === 'recap' && Array.isArray(out.previous)) out.previous = (out.previous as unknown[]).slice(-5);
+  return out;
+}
+
+export async function runAssist(kind: AssistKind, rawInput: Dict): Promise<Dict> {
+  const input = clip(kind, rawInput);
   if (useMockAssist()) return mockAssist(kind, input);
   if (kind === 'translate' && typeof input.prompt === 'string') {
     // 变量保护：翻译前把 {变量} 换成占位符，翻译后换回来，防止模型改动
@@ -234,6 +260,44 @@ function mockAssist(kind: AssistKind, input: Dict): Dict {
           { character: '旁白', text: str(input.sceneSummary, '夜色笼罩着沉默的街道。').slice(0, 40), emotion: '平静' },
           ...lines.map((text, index) => ({ character: pick(names, index), text, emotion: pick(EMOTIONS, index) })),
         ],
+      };
+    }
+    case 'recap': {
+      const title = str(input.chapterTitle, '本章');
+      const previous = Array.isArray(input.previous) && input.previous.length ? '承接前情，' : '';
+      return { recap: `${previous}${title}结束时，主角已经拿到关键线索，却也暴露了行踪；同伴之间产生分歧，远处的钟塔再次传来异响，新的危险正在逼近。` };
+    }
+    case 'extract': {
+      const script = str(input.script);
+      const names = [...new Set([...script.matchAll(/([\u4e00-\u9fa5]{2,3})[：:]/g)].map((m) => m[1]))].filter((n) => n !== '旁白').slice(0, 6);
+      return {
+        characters: (names.length ? names : ['林昔']).map((name, i) => ({ name, role: i === 0 ? '主角' : '配角', appearance: '' })),
+        locations: [{ name: '废墟街道', snippet: '残破的高楼，积水倒映霓虹，薄雾弥漫' }],
+        props: [{ name: '旧收音机', snippet: '掉漆的木壳收音机，指示灯泛着橙光' }],
+      };
+    }
+    case 'split': {
+      const source = str(input.source);
+      const parts = source.split(/\n{2,}|(?=第[一二三四五六七八九十百\d]+[章回节])/).map((p) => p.trim()).filter(Boolean);
+      const count = Math.min(Number(input.chapterCount) || Math.min(Math.max(parts.length, 1), 8), 20);
+      const per = Math.max(1, Math.ceil(parts.length / count));
+      return {
+        chapters: Array.from({ length: Math.min(count, Math.max(1, Math.ceil(parts.length / per))) }, (_, i) => {
+          const chunk = parts.slice(i * per, (i + 1) * per).join('\n');
+          return { title: `第${i + 1}章`, summary: chunk.slice(0, 120), firstSentence: chunk.split(/[。！？\n]/)[0] ?? '' };
+        }),
+      };
+    }
+    case 'split_shots': {
+      const idea = str(input.idea, '雨夜街头的少女');
+      const count = Math.min(Math.max(Number(input.count) || 4, 2), 8);
+      const beats = ['全景交代环境', '人物出场', '人物动作特写', '情绪高潮', '收尾远景', '余韵', '转场', '结尾'];
+      return {
+        shots: Array.from({ length: count }, (_, i) => ({
+          description: `${idea}，${beats[i % beats.length]}，电影感光影`,
+          motion: ['镜头缓慢推进', '人物缓缓走入画面', '人物抬头看向远方', '镜头环绕人物', '镜头缓缓升起拉远', '画面渐暗', '镜头横移', '定格'][i % 8],
+          duration: 5,
+        })),
       };
     }
     case 'shots': {

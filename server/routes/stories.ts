@@ -6,6 +6,7 @@ import type { StoryOp } from '../../shared/story-ops.ts';
 import { publish } from '../bus.ts';
 import { db, newId, now, parseJson, type Row } from '../db.ts';
 import { assetUrl, toAssets } from '../repo.ts';
+import { planBatch, runBatch, type BatchRequest } from '../stories/batch.ts';
 import { migrateStory } from '../stories/migrate.ts';
 import { applyOps, defaultData, loadStory, pruneSnapshots, snapshotStory, writeStory } from '../stories/store.ts';
 import { bad, parse, uid } from './common.ts';
@@ -289,6 +290,39 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
     const seen = new Set<string>();
     const rows = [...candidates, ...picked].filter((r) => (seen.has(String(r.id)) ? false : (seen.add(String(r.id)), true)));
     return toAssets(rows);
+  });
+
+  /** 批量生成：dryRun=true 只试算（任务数、GPU 时长、预计完成时间），否则存快照后创建任务 */
+  api.post('/api/stories/:id/generate', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const body = parse(
+      z.object({
+        scope: z.discriminatedUnion('type', [
+          z.object({ type: z.literal('all') }),
+          z.object({ type: z.literal('chapter'), id: z.string().max(60) }),
+          z.object({ type: z.literal('scene'), id: z.string().max(60) }),
+          z.object({ type: z.literal('shots'), ids: z.array(z.string().max(60)).min(1).max(5000) }),
+        ]),
+        content: z.enum(['keyframe', 'video', 'keyframe_then_video']),
+        mode: z.enum(['missing', 'append', 'redo']).default('missing'),
+        idle: z.boolean().optional(),
+        resolution: z.string().max(10).optional(),
+        dryRun: z.boolean().default(false),
+      }),
+      request.body,
+      reply,
+    );
+    if (!body) return;
+    const batch: BatchRequest = { scope: body.scope, content: body.content, mode: body.mode, idle: body.idle, resolution: body.resolution };
+    if (body.dryRun) return { plan: planBatch(id, uid(request), batch), created: 0 };
+    try {
+      return await runBatch(id, uid(request), batch);
+    } catch (error) {
+      return bad(reply, (error as Error).message);
+    }
   });
 
   api.get('/api/stories/:id/snapshots', async (request, reply) => {

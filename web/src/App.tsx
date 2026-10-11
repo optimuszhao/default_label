@@ -14,6 +14,7 @@ const Create = lazy(() => import('./pages/studio/Create.tsx'));
 const Inspire = lazy(() => import('./pages/studio/Inspire.tsx'));
 const Stories = lazy(() => import('./pages/studio/Stories.tsx'));
 const StoryEditor = lazy(() => import('./pages/studio/StoryEditor.tsx'));
+const Series = lazy(() => import('./pages/studio/Series.tsx'));
 const Queue = lazy(() => import('./pages/studio/Queue.tsx'));
 const Assets = lazy(() => import('./pages/studio/Assets.tsx'));
 const Settings = lazy(() => import('./pages/studio/Settings.tsx'));
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="inspire" element={<Inspire />} />
             <Route path="stories" element={<Stories />} />
             <Route path="stories/:id" element={<StoryEditor />} />
+            <Route path="series/:id" element={<Series />} />
             <Route path="queue" element={<Queue />} />
             <Route path="assets" element={<Assets />} />
             <Route path="settings" element={<Settings />} />

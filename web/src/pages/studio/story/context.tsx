@@ -1,11 +1,13 @@
 import { createContext, useContext } from 'react';
-import type { Scene, Shot, StoryData } from '../../../../../shared/types.ts';
-import { api, type NewTask } from '../../../lib/api.ts';
-import { imageParams, videoParams } from '../../../lib/presets.ts';
+import { create } from 'zustand';
+import { buildShotTask, portraitPrompt } from '../../../../../shared/story-prompt.ts';
+import type { Character, Scene, Shot, StoryData } from '../../../../../shared/types.ts';
+import { api } from '../../../lib/api.ts';
+import { imageParams } from '../../../lib/presets.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
-import { keyframePrompt, videoPrompt, type Recipe, type ShotMedia } from './model.ts';
+import { flattenShots, updateShot, type Recipe, type ShotMedia } from './model.ts';
 
-export const DEFAULT_KEYFRAME_NEGATIVE = '模糊，低质量，畸形，多余的手指，文字水印';
+export { DEFAULT_KEYFRAME_NEGATIVE } from '../../../../../shared/story-prompt.ts';
 
 export interface StoryContextValue {
   storyId: string;
@@ -26,77 +28,97 @@ export function useStory(): StoryContextValue {
   return value;
 }
 
-const shotNumber = (scene: Scene, shot: Shot) => String(scene.shots.findIndex((s) => s.id === shot.id) + 1).padStart(2, '0');
+export type BatchScope = { type: 'all' } | { type: 'chapter'; id: string; label?: string } | { type: 'scene'; id: string; label?: string } | { type: 'shots'; ids: string[] };
+
+/** 批量生成对话框（由 StoryEditor 挂载） */
+export const useBatchDialog = create<{ scope: BatchScope | null; content: 'keyframe' | 'video' | 'keyframe_then_video'; open: (scope: BatchScope, content?: 'keyframe' | 'video' | 'keyframe_then_video') => void; close: () => void }>(
+  (set) => ({
+    scope: null,
+    content: 'keyframe',
+    open: (scope, content = 'keyframe') => set({ scope, content }),
+    close: () => set({ scope: null }),
+  }),
+);
+
+/** 视频首帧：选定的关键帧 / 接续上一镜尾帧 / 指定素材 */
+async function resolveFirstFrame(data: StoryData, shot: Shot, media: Map<string, ShotMedia>): Promise<string | null> {
+  const mode = shot.firstFrame?.mode ?? 'keyframe';
+  if (mode === 'asset' && shot.firstFrame?.assetId) return shot.firstFrame.assetId;
+  if (mode === 'prev_last') {
+    const flat = flattenShots(data);
+    const index = flat.findIndex((item) => item.shot.id === shot.id);
+    const prevVideo = index > 0 ? media.get(flat[index - 1].shot.id)?.video : null;
+    if (prevVideo) {
+      const frame = await api.frame(prevVideo.id, 'last');
+      useStore.getState().upsertAssets([frame]);
+      return frame.id;
+    }
+    useStore.getState().toast('上一镜还没有视频，改用本镜关键帧做首帧', 'info');
+  }
+  return media.get(shot.id)?.keyframe?.id ?? null;
+}
 
 /**
- * 把分镜转成生成任务。关键帧走文生图：角色外貌已经写进提示词，
- * 不再把定妆照当图生图的底图（底图会把构图带偏，而对方接口也没有重绘强度）。
- * 视频优先用关键帧做图生视频。
+ * 把分镜转成生成任务（提示词由共享的构建器拼装，和服务端批量生成一致）。
+ * 关键帧走文生图；视频优先用首帧做图生视频，并自动固定所用的关键帧。
  */
 export function useShotGenerator() {
-  const { storyId, data, media } = useStory();
+  const { storyId, data, media, update } = useStory();
   const upsertTasks = useStore((s) => s.upsertTasks);
   const toast = useStore((s) => s.toast);
   const caps = useStore((s) => s.capabilities);
 
-  function keyframeTask(scene: Scene, shot: Shot, runNow: boolean): NewTask {
-    return {
-      type: 't2i',
-      title: `${scene.title} · #${shotNumber(scene, shot)} 关键帧`,
-      prompt: keyframePrompt(data, scene, shot),
-      negativePrompt: data.negativePrompt?.trim() || DEFAULT_KEYFRAME_NEGATIVE,
-      params: imageParams(data.aspectRatio, '1k', {}, caps),
-      inputs: {},
-      link: { storyId, shotId: shot.id, purpose: 'keyframe' },
-      runNow,
-    };
+  async function keyframe(scene: Scene, shot: Shot) {
+    try {
+      const task = await api.createTask({ ...buildShotTask(data, scene, shot, 'keyframe', { storyId, caps }), runNow: true });
+      upsertTasks([task]);
+      toast('关键帧：已加入队列', 'success');
+    } catch (error) {
+      reportError(error);
+    }
   }
 
-  function videoTask(scene: Scene, shot: Shot, runNow: boolean): NewTask {
-    const keyframe = media.get(shot.id)?.keyframe;
-    return {
-      type: keyframe ? 'i2v' : 't2v',
-      title: `${scene.title} · #${shotNumber(scene, shot)} 视频`,
-      prompt: videoPrompt(data, scene, shot),
-      negativePrompt: '画面闪烁，人物变形，低质量',
-      params: videoParams(data.aspectRatio, '720p', { duration: shot.duration }, caps),
-      inputs: { firstFrameAssetId: keyframe?.id ?? null },
-      link: { storyId, shotId: shot.id, purpose: 'video' },
-      runNow,
-    };
+  async function video(scene: Scene, shot: Shot) {
+    try {
+      const first = await resolveFirstFrame(data, shot, media);
+      const task = await api.createTask({ ...buildShotTask(data, scene, shot, 'video', { storyId, caps, firstFrameAssetId: first }), runNow: true });
+      upsertTasks([task]);
+      // 用它生成了视频：固定这张关键帧，之后出新候选也不会换掉
+      const kf = media.get(shot.id)?.keyframe;
+      if ((shot.firstFrame?.mode ?? 'keyframe') === 'keyframe' && kf && shot.keyframeAssetId !== kf.id) update(updateShot(scene.id, shot.id, { keyframeAssetId: kf.id }));
+      toast('视频：已加入队列', 'success');
+    } catch (error) {
+      reportError(error);
+    }
   }
 
-  async function submit(tasks: NewTask[], label: string) {
-    if (!tasks.length) {
-      toast('没有需要生成的镜头', 'info');
+  /** 定妆照：一次出 4 个候选 */
+  async function portrait(character: Character) {
+    if (!character.appearance.trim()) {
+      toast('先填写角色外貌描述', 'info');
       return;
     }
     try {
-      const created = tasks.length === 1 ? [await api.createTask(tasks[0])] : await api.createTasks(tasks);
-      upsertTasks(created);
-      toast(`${label}：已加入 ${created.length} 个任务`, 'success');
+      const task = await api.createTask({
+        type: 't2i',
+        title: `定妆照 · ${character.name}`,
+        prompt: portraitPrompt(data, character),
+        negativePrompt: ['多人，模糊，畸形，文字水印', character.negative].filter(Boolean).join('，'),
+        params: imageParams('3:4', '1k', { count: Math.min(4, caps.image.maxCount || 1), seed: character.seed ?? null }, caps),
+        link: { storyId, shotId: `char_${character.id}`, purpose: 'keyframe' },
+        runNow: true,
+      });
+      upsertTasks([task]);
     } catch (error) {
       reportError(error);
     }
   }
 
   return {
-    keyframe: (scene: Scene, shot: Shot, runNow = true) => submit([keyframeTask(scene, shot, runNow)], '关键帧'),
-    video: (scene: Scene, shot: Shot, runNow = true) => submit([videoTask(scene, shot, runNow)], '视频'),
-    /** 批量：只为没有结果且没有进行中任务的镜头生成 */
-    batchKeyframes: (items: { scene: Scene; shot: Shot }[]) =>
-      submit(
-        items
-          .filter(({ shot }) => !media.get(shot.id)?.keyframe && !media.get(shot.id)?.keyframeTask && shot.description.trim())
-          .map(({ scene, shot }) => keyframeTask(scene, shot, false)),
-        '批量关键帧',
-      ),
-    batchVideos: (items: { scene: Scene; shot: Shot }[]) =>
-      submit(
-        items
-          .filter(({ shot }) => !media.get(shot.id)?.video && !media.get(shot.id)?.videoTask && shot.description.trim())
-          .map(({ scene, shot }) => videoTask(scene, shot, false)),
-        '批量视频',
-      ),
+    keyframe,
+    video,
+    portrait,
+    /** 批量：打开批量生成对话框（服务端试算后执行） */
+    batch: (scope: BatchScope, content: 'keyframe' | 'video' | 'keyframe_then_video' = 'keyframe') => useBatchDialog.getState().open(scope, content),
   };
 }

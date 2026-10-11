@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, CloudOff, History, LayoutGrid, Loader2, Lock, Redo2, Undo2 } from 'lucide-react';
+import { CompareView } from '../../components/CompareView.tsx';
 import { Button, IconButton, Spinner } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError, useStore } from '../../lib/store.ts';
 import { cx } from '../../lib/util.ts';
+import { BatchDialog } from './story/BatchDialog.tsx';
 import { CharactersTab } from './story/CharactersTab.tsx';
 import { StoryContext, type StoryContextValue } from './story/context.tsx';
 import { HistoryDialog } from './story/HistoryDialog.tsx';
@@ -30,6 +32,12 @@ export default function StoryEditor() {
   const upsertTasks = useStore((s) => s.upsertTasks);
   const toast = useStore((s) => s.toast);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [series, setSeries] = useState<{ id: string; title: string; episodeNo: number | null } | null>(null);
+  const showSeries = async (seriesId: string | null, episodeNo: number | null) => {
+    if (!seriesId) return setSeries(null);
+    const list = await api.seriesList().catch(() => []);
+    setSeries({ id: seriesId, title: list.find((item) => item.id === seriesId)?.title ?? '系列', episodeNo });
+  };
   const sync = useStorySync(id);
   const { content, save, readOnly, load, update, setTitle, undo, redo, canUndo, canRedo } = sync;
   const title = content?.title ?? '';
@@ -41,7 +49,9 @@ export default function StoryEditor() {
       try {
         const story = await load();
         if (!alive || !story) return;
-        const position = (story as unknown as { lastPosition?: { tab?: string; sceneId?: string | null } }).lastPosition;
+        const meta = story as unknown as { lastPosition?: { tab?: string; sceneId?: string | null }; seriesId?: string | null; episodeNo?: number | null };
+        const position = meta.lastPosition;
+        void showSeries(meta.seriesId ?? null, meta.episodeNo ?? null);
         setSceneId(position?.sceneId ?? story.data.chapters[0]?.scenes[0]?.id ?? null);
         if (!params.get('tab') && position?.tab) setParams({ tab: position.tab }, { replace: true });
         const [storyAssets, recent, storyTasks] = await Promise.all([api.storyMedia(id), api.assets({ limit: 120 }), api.tasks({ storyId: id, limit: 1000 })]);
@@ -130,6 +140,12 @@ export default function StoryEditor() {
             className="min-w-0 flex-1 bg-transparent text-lg font-semibold tracking-tight focus:outline-none sm:text-xl"
             aria-label="故事名称"
           />
+          {series && (
+            <Link to={`/studio/series/${series.id}`} className="hidden shrink-0 rounded-md border border-line px-2 py-0.5 text-[11px] text-fg-2 hover:border-accent hover:text-fg sm:inline">
+              {series.title}
+              {series.episodeNo ? ` · 第 ${series.episodeNo} 集` : ''}
+            </Link>
+          )}
           <span className="hidden font-mono text-[11px] text-fg-3 md:inline">
             {stats.chapters} 章 · {stats.scenes} 场 · {stats.shots} 镜 · 关键帧 {stats.keyframes}/{stats.shots}
           </span>
@@ -174,6 +190,9 @@ export default function StoryEditor() {
             toast('已恢复到所选版本', 'success');
           }}
         />
+
+        <BatchDialog />
+        <CompareView />
 
         {/* 步骤条 */}
         <div className="sticky top-14 z-20 -mx-4 mt-3 border-b border-line bg-ink/90 px-4 backdrop-blur-xl sm:-mx-6 sm:px-6 md:top-0">
@@ -231,8 +250,19 @@ export default function StoryEditor() {
 
         <div className={cx(!step && 'mt-4')}>
           {tab === 'overview' && <OverviewTab go={go} />}
-          {tab === 'setup' && <SetupTab title={title} onTitle={changeTitle} />}
-          {tab === 'characters' && <CharactersTab />}
+          {tab === 'setup' && (
+            <SetupTab
+              title={title}
+              onTitle={changeTitle}
+              seriesId={series?.id ?? null}
+              onSeries={(seriesId) => void (async () => {
+                const story = await api.story(id);
+                await showSeries(seriesId, (story as unknown as { episodeNo?: number | null }).episodeNo ?? null);
+                await load();
+              })()}
+            />
+          )}
+          {tab === 'characters' && <CharactersTab inSeries={Boolean(series)} />}
           {tab === 'structure' && <StructureTab onOpenScene={(sid) => go('script', sid)} />}
           {tab === 'script' && <ScriptTab onGoShots={() => go('shots')} />}
           {tab === 'shots' && <ShotsTab />}

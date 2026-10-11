@@ -1,6 +1,6 @@
 // 故事数据的不可变更新工具与提示词拼装。
 // 只沿修改路径做浅拷贝，长篇故事（上千个镜头）编辑时也不会卡顿。
-import type { Asset, Chapter, Character, DialogueLine, Scene, Shot, StoryData, Task } from '../../../../../shared/types.ts';
+import type { Asset, Chapter, Character, DialogueLine, Scene, Shot, StoryData, StoryElement, Task } from '../../../../../shared/types.ts';
 import { uid } from '../../../lib/util.ts';
 
 export type Recipe = (data: StoryData) => StoryData;
@@ -12,6 +12,14 @@ export const newCharacter = (patch: Partial<Character> = {}): Character => ({
   appearance: '',
   personality: '',
   referenceAssetId: null,
+  ...patch,
+});
+
+export const newElement = (kind: StoryElement['kind'], patch: Partial<StoryElement> = {}): StoryElement => ({
+  id: uid('e_'),
+  kind,
+  name: kind === 'location' ? '新地点' : kind === 'prop' ? '新道具' : '新画风',
+  snippet: '',
   ...patch,
 });
 
@@ -116,44 +124,6 @@ export function findScene(data: StoryData, sceneId: string | null): { scene: Sce
   return null;
 }
 
-function characterText(data: StoryData, ids: string[]): string {
-  const chars = ids
-    .map((id) => data.characters.find((c) => c.id === id))
-    .filter((c): c is Character => Boolean(c) && Boolean(c?.appearance));
-  return chars.length ? `出镜角色：${chars.map((c) => `${c.name}（${c.appearance}）`).join('；')}。` : '';
-}
-
-/** 分镜关键帧提示词：统一画风 + 场景 + 景别 + 画面描述 + 角色外貌，保证跨镜头一致 */
-export function keyframePrompt(data: StoryData, scene: Scene, shot: Shot): string {
-  return [
-    data.visualStyle && `${data.visualStyle}。`,
-    [scene.location, scene.time].filter(Boolean).join('，') && `${[scene.location, scene.time].filter(Boolean).join('，')}。`,
-    `${shot.shotSize}。${shot.description}`,
-    characterText(data, shot.characterIds),
-  ]
-    .filter(Boolean)
-    .join('');
-}
-
-export function videoPrompt(data: StoryData, scene: Scene, shot: Shot): string {
-  const lines = shot.dialogueIds
-    .map((id) => scene.dialogue.find((d) => d.id === id))
-    .filter((d): d is DialogueLine => Boolean(d?.text));
-  const talk = lines.length
-    ? `人物台词：${lines
-        .map((line) => `${data.characters.find((c) => c.id === line.characterId)?.name ?? '旁白'}${line.emotion ? `（${line.emotion}）` : ''}：“${line.text}”`)
-        .join(' ')}`
-    : '';
-  return [
-    `${shot.cameraMove === '固定' ? '固定机位' : `${shot.cameraMove}镜头`}，${shot.shotSize}。${shot.description}。`,
-    characterText(data, shot.characterIds),
-    data.visualStyle && `风格：${data.visualStyle}。`,
-    talk,
-  ]
-    .filter(Boolean)
-    .join('');
-}
-
 export function dialogueFor(scene: Scene, shot: Shot): DialogueLine[] {
   return shot.dialogueIds
     .map((id) => scene.dialogue.find((d) => d.id === id))
@@ -183,7 +153,7 @@ export function buildShotMedia(storyId: string, assets: Record<string, Asset>, t
     return item;
   };
   for (const asset of Object.values(assets)) {
-    if (asset.storyId !== storyId || !asset.shotId) continue;
+    if (asset.storyId !== storyId || !asset.shotId || asset.deletedAt) continue;
     (asset.purpose === 'video' ? entry(asset.shotId).videos : entry(asset.shotId).keyframes).push(asset);
   }
   for (const task of Object.values(tasks)) {
@@ -201,10 +171,12 @@ export function buildShotMedia(storyId: string, assets: Record<string, Asset>, t
     const pinnedKeyframe = shot.keyframeAssetId ? assets[shot.keyframeAssetId] : undefined;
     const pinnedVideo = shot.videoAssetId ? assets[shot.videoAssetId] : undefined;
     if (pinnedKeyframe && !item.keyframes.includes(pinnedKeyframe)) item.keyframes.push(pinnedKeyframe);
+    if (pinnedVideo && !item.videos.includes(pinnedVideo)) item.videos.push(pinnedVideo);
+    // 没有显式选定时：最新一张没被淘汰的候选
     result.set(shot.id, {
       ...item,
-      keyframe: pinnedKeyframe ?? item.keyframes[0] ?? null,
-      video: pinnedVideo ?? item.videos[0] ?? null,
+      keyframe: pinnedKeyframe ?? item.keyframes.find((a) => a.flag !== 'reject') ?? null,
+      video: pinnedVideo ?? item.videos.find((a) => a.flag !== 'reject') ?? null,
     });
   }
   return result;

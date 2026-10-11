@@ -69,7 +69,6 @@ export function PreviewTab() {
 
   const lines = current ? dialogueFor(current.scene, current.shot) : [];
   const progress = (before + (playableVideo ? elapsed : Math.min(elapsed, current.shot.duration))) / Math.max(1, totalDuration);
-  const all = shots.map(({ scene, shot }) => ({ scene, shot }));
 
   return (
     <div className="space-y-4">
@@ -168,8 +167,8 @@ export function PreviewTab() {
           <span className="inline-flex items-center gap-1"><Film className="size-3.5" /> 视频 {stats.videos}/{shots.length}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" icon={<ImageIcon className="size-3.5" />} onClick={() => void generator.batchKeyframes(all)}>补齐全部关键帧</Button>
-          <Button size="sm" variant="brand" icon={<Film className="size-3.5" />} onClick={() => void generator.batchVideos(all)}>补齐全部视频</Button>
+          <Button size="sm" icon={<ImageIcon className="size-3.5" />} onClick={() => generator.batch({ type: 'all' }, 'keyframe')}>补齐全部关键帧</Button>
+          <Button size="sm" variant="brand" icon={<Film className="size-3.5" />} onClick={() => generator.batch({ type: 'all' }, 'video')}>补齐全部视频</Button>
         </div>
       </div>
     </div>

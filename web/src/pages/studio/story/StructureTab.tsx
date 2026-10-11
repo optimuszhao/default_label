@@ -1,5 +1,9 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Layers, Plus, Sparkles, Trash2 } from 'lucide-react';
+import type { Chapter } from '../../../../../shared/types.ts';
+import { api } from '../../../lib/api.ts';
+import { reportError } from '../../../lib/store.ts';
+import { Modal } from '../../../components/ui.tsx';
+import { BookText, ChevronDown, ChevronUp, History, Layers, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { Button, Empty, IconButton } from '../../../components/ui.tsx';
 import { useStore } from '../../../lib/store.ts';
 import { useStory } from './context.tsx';
@@ -8,9 +12,76 @@ import { SplitDialog } from './ScriptTab.tsx';
 import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 
 /** 章节场次：只关心故事骨架，每场的剧情和台词在下一步「剧本台词」里写 */
+/** 导入原著长文：AI 拆成章节（标题 + 梗概），追加到故事里 */
+function ImportSourceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { storyId, update, flushNow } = useStory();
+  const [source, setSource] = useState('');
+  const [count, setCount] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    if (!source.trim()) return;
+    setBusy(true);
+    try {
+      await flushNow?.();
+      const result = await api.assist<{ chapters: { title: string; summary: string }[] }>('split', { storyId, source, chapterCount: count ? Number(count) : undefined });
+      update((d) => ({ ...d, chapters: [...d.chapters, ...result.chapters.map((c) => newChapter({ title: c.title, summary: c.summary, scenes: [newScene({ title: '场次 1' })] }))] }));
+      useStore.getState().toast(`已追加 ${result.chapters.length} 章`, 'success');
+      setSource('');
+      onClose();
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal open={open} onClose={onClose} title="导入原著，AI 拆分章节" wide>
+      <textarea className="field min-h-64 text-sm" value={source} onChange={(e) => setSource(e.target.value)} placeholder="把小说、剧本或长篇文字贴在这里（一次最多约 1.2 万字，更长的可以分几次导入）" />
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-sm text-fg-2">
+          拆成
+          <input type="number" min={1} max={20} className="field !w-16 !py-1" value={count} onChange={(e) => setCount(e.target.value)} placeholder="自动" />
+          章
+        </label>
+        <span className="text-xs text-fg-3">{source.length} 字</span>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onClose}>取消</Button>
+          <Button variant="brand" loading={busy} disabled={!source.trim()} onClick={() => void run()}>拆分并追加</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) => void }) {
-  const { data, update } = useStory();
+  const { storyId, data, update, flushNow } = useStory();
   const [splitting, setSplitting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [recapping, setRecapping] = useState<string | null>(null);
+
+  /** 前情提要：给后面的章节（和系列的下一集）当上下文 */
+  async function recap(chapter: Chapter, index: number) {
+    setRecapping(chapter.id);
+    try {
+      await flushNow?.();
+      const context = await api.storyContext(storyId).catch(() => ({ previous: [] }));
+      const previous = [
+        ...context.previous.flatMap((episode) => episode.recaps.map((text) => `第 ${episode.episodeNo} 集 · ${text}`)),
+        ...data.chapters.slice(0, index).map((c) => c.recap).filter((text): text is string => Boolean(text)),
+      ];
+      const result = await api.assist<{ recap: string }>('recap', {
+        chapterTitle: chapter.title,
+        chapterSummary: chapter.summary,
+        scenes: chapter.scenes.map((s) => ({ title: s.title, summary: s.summary, dialogue: s.dialogue.map((l) => l.text).join(' ') })),
+        previous,
+      });
+      update(updateChapter(chapter.id, (c) => ({ ...c, recap: result.recap })));
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setRecapping(null);
+    }
+  }
 
   function addChapter() {
     update((d) => ({
@@ -24,6 +95,9 @@ export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) =
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button size="sm" icon={<Plus className="size-3.5" />} onClick={addChapter}>
           新增章节
+        </Button>
+        <Button size="sm" variant="ghost" icon={<BookText className="size-3.5" />} onClick={() => setImporting(true)}>
+          导入原著
         </Button>
         <Button
           size="sm"
@@ -75,6 +149,19 @@ export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) =
               placeholder="本章概要：这一章讲了什么、推进了哪条线索"
               aria-label="章节概要"
             />
+            <div className="mt-1 flex items-start gap-2">
+              <textarea
+                className="min-w-0 flex-1 resize-none bg-transparent text-[11px] leading-relaxed text-fg-3 placeholder:text-fg-3/60 focus:outline-none"
+                rows={chapter.recap ? 2 : 1}
+                value={chapter.recap ?? ''}
+                onChange={(e) => update(updateChapter(chapter.id, (c) => ({ ...c, recap: e.target.value })))}
+                placeholder="前情提要（本章结束时的处境和悬念，AI 写后面的章节和下一集时会参考）"
+                aria-label="前情提要"
+              />
+              <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} loading={recapping === chapter.id} onClick={() => void recap(chapter, chapterIndex)}>
+                AI 提要
+              </Button>
+            </div>
           </div>
           <div className="divide-y divide-line">
             {chapter.scenes.map((scene, sceneIndex) => (
@@ -135,6 +222,7 @@ export function StructureTab({ onOpenScene }: { onOpenScene: (sceneId: string) =
         </section>
       ))}
       <SplitDialog open={splitting} onClose={() => setSplitting(false)} />
+      <ImportSourceDialog open={importing} onClose={() => setImporting(false)} />
     </div>
   );
 }

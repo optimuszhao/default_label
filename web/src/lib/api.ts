@@ -84,6 +84,38 @@ export interface NewTask {
   runNow?: boolean;
 }
 
+export interface SeriesSettings {
+  visualStyle?: string;
+  aspectRatio?: string;
+  defaultSeed?: number | null;
+  negativePrompt?: string;
+  genre?: string;
+  tone?: string;
+}
+
+export interface SeriesSummary {
+  id: string;
+  title: string;
+  settings: SeriesSettings;
+  coverAssetId: string | null;
+  totals: { episodes: number; shots: number; duration: number };
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SeriesBoard extends SeriesSummary {
+  episodes: {
+    id: string;
+    title: string;
+    episodeNo: number | null;
+    status: string;
+    stats: { shots?: number; duration?: number; chapters?: number };
+    progress: { shots: number; keyframes: number; videos: number; locked: number } | null;
+    updatedAt: number;
+  }[];
+  shared: { id: string; kind: string; name: string; storyId: string | null }[];
+}
+
 export type BatchAction = 'favorite' | 'rating' | 'flag' | 'move' | 'addTags' | 'removeTags' | 'trash' | 'restore' | 'purge';
 
 export interface AssetFacets {
@@ -246,7 +278,17 @@ export const api = {
   storySnapshot: (id: string, snapshotId: string) => request<StorySnapshot & { data: StoryData }>('GET', `/api/stories/${id}/snapshots/${snapshotId}`),
   saveSnapshot: (id: string, label: string) => request<StorySnapshot>('POST', `/api/stories/${id}/snapshots`, { label }),
   restoreSnapshot: (id: string, snapshotId: string) => request<Story>('POST', `/api/stories/${id}/snapshots/${snapshotId}/restore`),
-  deleteStory: (id: string) => request('DELETE', `/api/stories/${id}`),
+  deleteStory: (id: string, purge = false) => request('DELETE', `/api/stories/${id}${purge ? '?purge=1' : ''}`),
+  restoreStory: (id: string) => request('POST', `/api/stories/${id}/restore`),
+  storyContext: (id: string) => request<{ previous: { episodeNo: number; title: string; recaps: string[] }[] }>('GET', `/api/stories/${id}/context`),
+  shotFromAsset: (id: string, assetId: string, sceneId: string) => request<{ shotId: string; rev: number }>('POST', `/api/stories/${id}/shots/from-asset`, { assetId, sceneId }),
+  setStorySeries: (id: string, seriesId: string | null) => request<{ ok: true; episodeNo: number | null }>('POST', `/api/stories/${id}/series`, { seriesId }),
+  seriesList: () => request<SeriesSummary[]>('GET', '/api/series'),
+  series: (id: string) => request<SeriesBoard>('GET', `/api/series/${id}`),
+  createSeries: (title: string, settings: SeriesSettings = {}) => request<SeriesSummary>('POST', '/api/series', { title, settings }),
+  updateSeries: (id: string, patch: { title?: string; settings?: SeriesSettings }) => request<SeriesSummary>('PATCH', `/api/series/${id}`, patch),
+  deleteSeries: (id: string) => request('DELETE', `/api/series/${id}`),
+  createEpisode: (id: string, title: string, copyStructureFrom?: string | null) => request<Story>('POST', `/api/series/${id}/episodes`, { title, copyStructureFrom }),
 
   assist: <T>(kind: AssistKind, input: Record<string, unknown>) => request<T>('POST', `/api/assist/${kind}`, input),
 };

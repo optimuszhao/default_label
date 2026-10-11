@@ -221,8 +221,8 @@ let llmState = { ok: false, checkedAt: 0 };
 
 async function llmAvailable(force: boolean): Promise<boolean> {
   if (!llmConfigured()) {
-    // 没配语言模型时，模拟算子自带模拟写作助手（开发和演示用）
-    return [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled);
+    // 没配语言模型时，模拟算子自带模拟写作助手（开发和演示用）；LLM_MOCK=1 时也用模拟助手
+    return config.llmMock || [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled);
   }
   if (force || Date.now() - llmState.checkedAt > config.healthTtlMs * 3) {
     llmState = { ok: await llmHealthy(), checkedAt: Date.now() };
@@ -231,7 +231,7 @@ async function llmAvailable(force: boolean): Promise<boolean> {
 }
 
 export function useMockAssist(): boolean {
-  return !llmConfigured() && [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled);
+  return !llmConfigured() && (config.llmMock || [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled));
 }
 
 function usable(entry: Entry, isAdmin: boolean): boolean {

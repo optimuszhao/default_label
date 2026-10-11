@@ -1,15 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpenText, Clapperboard, Plus, Trash2 } from 'lucide-react';
+import { BookOpenText, Clapperboard, Library, Plus, Trash2 } from 'lucide-react';
 import type { StorySummary } from '../../../../shared/types.ts';
 import { Button, Empty, IconButton, Modal } from '../../components/ui.tsx';
-import { api } from '../../lib/api.ts';
+import { api, type SeriesSummary } from '../../lib/api.ts';
+import { promptDialog } from '../../components/ConfirmDialog.tsx';
 import { reportError } from '../../lib/store.ts';
 import { timeAgo } from '../../lib/util.ts';
 import { confirmDialog } from '../../components/ConfirmDialog.tsx';
 
 export default function Stories() {
   const [stories, setStories] = useState<StorySummary[] | null>(null);
+  const [series, setSeries] = useState<SeriesSummary[]>([]);
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState('');
   const [logline, setLogline] = useState('');
@@ -21,7 +23,19 @@ export default function Stories() {
       reportError(error);
       setStories([]);
     });
+    void api.seriesList().then(setSeries).catch(() => undefined);
   }, []);
+
+  async function createSeries() {
+    const name = await promptDialog({ title: '新建系列', message: '系列里的各集共享画风、比例和标记为"系列共享"的角色设定。', placeholder: '系列名', maxLength: 80, confirmText: '创建' });
+    if (!name) return;
+    try {
+      const created = await api.createSeries(name);
+      navigate(`/studio/series/${created.id}`);
+    } catch (error) {
+      reportError(error);
+    }
+  }
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -53,10 +67,31 @@ export default function Stories() {
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">故事工坊</h1>
           <p className="mt-1 text-sm text-fg-3">大纲 → 角色 → 章节剧本 → 台词 → 分镜 → 成片，构建任意长度的视频故事。</p>
         </div>
-        <Button variant="brand" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
-          新建故事
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="ghost" icon={<Library className="size-4" />} onClick={() => void createSeries()}>
+            新建系列
+          </Button>
+          <Button variant="brand" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
+            新建故事
+          </Button>
+        </div>
       </div>
+
+      {series.length > 0 && (
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {series.map((item) => (
+            <Link key={item.id} to={`/studio/series/${item.id}`} className="panel p-4 transition hover:border-line-strong">
+              <p className="flex items-center gap-1.5 text-xs text-accent">
+                <Library className="size-3.5" /> 系列
+              </p>
+              <p className="mt-1 truncate font-medium">{item.title}</p>
+              <p className="mt-1 text-xs text-fg-3">
+                {item.totals.episodes} 集 · {item.totals.shots} 镜
+              </p>
+            </Link>
+          ))}
+        </div>
+      )}
 
       <div className="mt-8">
         {stories === null ? (

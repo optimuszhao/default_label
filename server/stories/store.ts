@@ -46,7 +46,8 @@ function outlineId(storyId: string): string {
 // ---------------- 读 ----------------
 
 export function loadStory(storyId: string): LoadedStory {
-  const story = db.prepare('SELECT title, settings FROM stories WHERE id = ?').get(storyId) as Row;
+  const story = db.prepare('SELECT title, settings, series_id FROM stories WHERE id = ?').get(storyId) as Row;
+  const seriesId = (story.series_id as string | null) ?? null;
   const settings = parseJson<Record<string, unknown>>(story.settings, {});
   const keys: Record<string, string> = {};
   const outline = db.prepare("SELECT content FROM story_docs WHERE story_id = ? AND kind = 'outline' LIMIT 1").get(storyId) as Row | undefined;
@@ -56,9 +57,9 @@ export function loadStory(storyId: string): LoadedStory {
     .prepare(
       `SELECT ea.entity_id, ea.asset_id, ea.role FROM entity_assets ea
        JOIN story_elements e ON e.id = ea.entity_id AND ea.entity_type = 'element'
-       WHERE e.story_id = ? ORDER BY ea.sort_key, ea.created_at`,
+       WHERE e.story_id = ? OR (e.series_id IS NOT NULL AND e.series_id = ?) ORDER BY ea.sort_key, ea.created_at`,
     )
-    .all(storyId) as Row[]) {
+    .all(storyId, seriesId) as Row[]) {
     const list = refs.get(String(row.entity_id)) ?? [];
     list.push({ assetId: String(row.asset_id), role: String(row.role) });
     refs.set(String(row.entity_id), list);
@@ -67,7 +68,10 @@ export function loadStory(storyId: string): LoadedStory {
   const characters: Character[] = [];
   const elements: StoryElement[] = [];
   const kindOf = new Map<string, string>();
-  for (const row of db.prepare('SELECT * FROM story_elements WHERE story_id = ? AND deleted_at IS NULL ORDER BY sort_key').all(storyId) as Row[]) {
+  // 本故事的设定，加上同一系列里其他集共享出来的设定
+  for (const row of db
+    .prepare('SELECT * FROM story_elements WHERE (story_id = ? OR (series_id IS NOT NULL AND series_id = ?)) AND deleted_at IS NULL ORDER BY sort_key')
+    .all(storyId, seriesId) as Row[]) {
     const id = String(row.id);
     keys[id] = String(row.sort_key);
     kindOf.set(id, String(row.kind));
@@ -253,15 +257,18 @@ function insertElement(storyId: string, userId: string, item: Record<string, unk
     kind === 'character'
       ? pick(item, ['role', 'personality', 'aliases', 'seed', 'outfits', 'seriesShared'])
       : pick(item, ['aliases', 'seed', 'variants', 'seriesShared']);
+  const seriesId = item.seriesShared ? (((db.prepare('SELECT series_id FROM stories WHERE id = ?').get(storyId) as Row | undefined)?.series_id as string | null) ?? null) : null;
   db.prepare(
-    `INSERT INTO story_elements (id, user_id, story_id, kind, name, sort_key, snippet, negative, data, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET story_id = excluded.story_id, kind = excluded.kind, name = excluded.name, sort_key = excluded.sort_key,
-       snippet = excluded.snippet, negative = excluded.negative, data = excluded.data, deleted_at = NULL, updated_at = excluded.updated_at`,
+    `INSERT INTO story_elements (id, user_id, story_id, series_id, kind, name, sort_key, snippet, negative, data, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET story_id = COALESCE(story_elements.story_id, excluded.story_id), series_id = excluded.series_id, kind = excluded.kind,
+       name = excluded.name, sort_key = excluded.sort_key, snippet = excluded.snippet, negative = excluded.negative, data = excluded.data,
+       deleted_at = NULL, updated_at = excluded.updated_at`,
   ).run(
     String(item.id),
     userId,
     storyId,
+    seriesId,
     kind,
     String(item.name ?? ''),
     sortKey,
@@ -456,12 +463,16 @@ function parentOk(storyId: string, entity: string, parentId: string | null | und
   return true;
 }
 
+const SHARED = `(story_id = ? OR (series_id IS NOT NULL AND series_id = (SELECT series_id FROM stories WHERE id = ?)))`;
+
 function exists(storyId: string, entity: string, id: string): boolean {
+  if (entity === 'character' || entity === 'element') return Boolean(db.prepare(`SELECT 1 FROM story_elements WHERE id = ? AND ${SHARED}`).get(id, storyId, storyId));
   return Boolean(db.prepare(`SELECT 1 FROM ${TABLE[entity]} WHERE id = ? AND story_id = ?`).get(id, storyId));
 }
 
-/** 别的故事已经占用了这个 id（防止通过 ops 改别人的数据） */
+/** 别的故事已经占用了这个 id（防止通过 ops 改别人的数据）；同一系列共享的设定不算 */
 function foreign(storyId: string, entity: string, id: string): boolean {
+  if (entity === 'character' || entity === 'element') return Boolean(db.prepare(`SELECT 1 FROM story_elements WHERE id = ? AND NOT ${SHARED}`).get(id, storyId, storyId));
   return Boolean(db.prepare(`SELECT 1 FROM ${TABLE[entity]} WHERE id = ? AND COALESCE(story_id, '') <> ?`).get(id, storyId));
 }
 
@@ -493,7 +504,7 @@ export function applyOps(storyId: string, userId: string, ops: StoryOp[]): Apply
       if (entity === 'character' || entity === 'element') {
         db.prepare("DELETE FROM entity_assets WHERE entity_type = 'element' AND entity_id = ?").run(op.id);
         db.prepare('DELETE FROM shot_elements WHERE element_id = ?').run(op.id);
-        db.prepare('DELETE FROM story_elements WHERE id = ? AND story_id = ?').run(op.id, storyId);
+        db.prepare('DELETE FROM story_elements WHERE id = ?').run(op.id);
       } else {
         if (entity === 'shot') db.prepare('DELETE FROM shot_elements WHERE shot_id = ?').run(op.id);
         if (entity === 'scene') db.prepare('DELETE FROM shot_elements WHERE shot_id IN (SELECT id FROM story_shots WHERE scene_id = ?)').run(op.id);
@@ -559,6 +570,11 @@ export function applyOps(storyId: string, userId: string, ops: StoryOp[]): Apply
         const others = field === 'refs' ? ((value as ElementRef[]) ?? []) : current.filter((r) => r.role !== 'primary');
         setRefs(op.id, primary, others, String(row.kind));
         continue;
+      }
+      if ((entity === 'character' || entity === 'element') && field === 'seriesShared') {
+        const series = value ? ((db.prepare('SELECT series_id FROM stories WHERE id = ?').get(storyId) as Row | undefined)?.series_id ?? null) : null;
+        sets.push('series_id = ?');
+        args.push(series);
       }
       const column = columns[field];
       if (column) {

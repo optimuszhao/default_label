@@ -7,6 +7,7 @@ import { useStore } from '../../../lib/store.ts';
 import { cx, formatDuration } from '../../../lib/util.ts';
 import { useStory } from './context.tsx';
 import { EMPTY_MEDIA } from './model.ts';
+import { ProgressBoard } from './ProgressBoard.tsx';
 import { nextStep, STEPS, stepDone, storyStats, type StepId } from './steps.ts';
 
 type Go = (step: StepId, sceneId?: string) => void;
@@ -127,6 +128,8 @@ export function OverviewTab({ go }: { go: Go }) {
           </Button>
         </div>
       )}
+
+      {stats.shots > 0 && <ProgressBoard go={go} />}
 
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="章节" value={stats.chapters} icon={<BookOpenText className="size-3.5" />} />

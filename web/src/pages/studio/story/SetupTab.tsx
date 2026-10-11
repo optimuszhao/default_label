@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Button } from '../../../components/ui.tsx';
-import { api } from '../../../lib/api.ts';
+import { api, type SeriesSummary } from '../../../lib/api.ts';
 import { ASPECT_RATIOS, cssRatio } from '../../../lib/presets.ts';
 import { reportError } from '../../../lib/store.ts';
 import { DEFAULT_KEYFRAME_NEGATIVE, useStory } from './context.tsx';
@@ -10,7 +10,42 @@ import { confirmDialog } from '../../../components/ConfirmDialog.tsx';
 const GENRES = ['科幻', '奇幻', '悬疑', '爱情', '武侠', '喜剧', '恐怖', '历史', '治愈', '动作'];
 const STYLES = ['电影质感，写实光影，35mm 胶片颗粒', '日系动画，清新明亮，赛璐璐上色', '国风水墨，留白意境', '赛博朋克，霓虹高对比', '皮克斯 3D 动画风格', '黑白默片质感'];
 
-export function SetupTab({ title, onTitle }: { title: string; onTitle: (title: string) => void }) {
+/** 所属系列：选一个系列加入，或移出 */
+function SeriesPicker({ seriesId, onChange }: { seriesId: string | null; onChange: (seriesId: string | null) => void }) {
+  const { storyId } = useStory();
+  const [list, setList] = useState<SeriesSummary[]>([]);
+  useEffect(() => {
+    void api.seriesList().then(setList).catch(() => undefined);
+  }, []);
+  return (
+    <div>
+      <label className="label">所属系列（多集共享画风和角色设定）</label>
+      <select
+        className="field"
+        value={seriesId ?? ''}
+        onChange={async (e) => {
+          const next = e.target.value || null;
+          try {
+            await api.setStorySeries(storyId, next);
+            onChange(next);
+          } catch (error) {
+            reportError(error);
+          }
+        }}
+        aria-label="所属系列"
+      >
+        <option value="">不属于任何系列</option>
+        {list.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.title}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+export function SetupTab({ title, onTitle, seriesId = null, onSeries }: { title: string; onTitle: (title: string) => void; seriesId?: string | null; onSeries?: (seriesId: string | null) => void }) {
   const { storyId, data, update, flushNow } = useStory();
   const [loading, setLoading] = useState(false);
 
@@ -94,6 +129,7 @@ export function SetupTab({ title, onTitle }: { title: string; onTitle: (title: s
             ))}
           </div>
         </div>
+        {onSeries && <SeriesPicker seriesId={seriesId} onChange={onSeries} />}
       </section>
 
       <section className="panel flex flex-col p-4 sm:p-5">
