@@ -22,10 +22,13 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # ---------- 运行镜像 ----------
 FROM ${NODE_IMAGE}
-# ffmpeg 只在模拟服务（PROVIDER=mock）生成演示视频时用到，接真实服务后不需要。
-# 需要时构建加 --build-arg WITH_FFMPEG=1；时区由 Node 自带的 ICU 数据处理，不依赖系统 tzdata。
-ARG WITH_FFMPEG=0
+# ffmpeg / ffprobe：缩略图、视频封面、截帧、尾帧接力、拼接成片都要用（默认内置）。
+# 不需要时构建加 --build-arg WITH_FFMPEG=0，相关功能会自动降级。
+# Debian 源访问慢时可指定镜像，例如 --build-arg APT_MIRROR=mirrors.aliyun.com
+ARG WITH_FFMPEG=1
+ARG APT_MIRROR=
 RUN if [ "$WITH_FFMPEG" = "1" ]; then \
+      if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; fi && \
       apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; \
     fi
 

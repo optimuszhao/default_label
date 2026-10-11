@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ConfirmHost } from './components/ConfirmDialog.tsx';
+import { FolderPickerHost } from './components/library/FolderPicker.tsx';
 import { Spinner, Toasts } from './components/ui.tsx';
 import { useServerEvents } from './lib/events.ts';
 import { useStore } from './lib/store.ts';
@@ -110,6 +111,7 @@ export default function App() {
       </Suspense>
       <Toasts />
       <ConfirmHost />
+      <FolderPickerHost />
     </>
   );
 }

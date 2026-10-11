@@ -147,7 +147,8 @@ describe('探针与请求编号', () => {
   });
 
   // 路线图目标是 120 MB；实测 node 22 + fastify + pino 空闲约 125 MB，先以 150 MB 为红线防止回归
-  test('空闲内存不超过 150 MB', async () => {
+  // 读 /proc 取内存，只在 Linux（CI、NAS）上跑
+  test('空闲内存不超过 150 MB', { skip: process.platform !== 'linux' }, async () => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     const rss = Number(/VmRSS:\s+(\d+)/.exec(fs.readFileSync(`/proc/${h.pid}/status`, 'utf8'))![1]) / 1024;
     assert.ok(rss < 150, `空闲 RSS ${rss.toFixed(1)} MB`);

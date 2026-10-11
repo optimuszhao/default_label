@@ -65,7 +65,7 @@ const ShotCard = memo(function ShotCard({
   index: number;
   onOpen: (asset: Asset) => void;
 }) {
-  const { data, update, media } = useStory();
+  const { storyId, data, update, media } = useStory();
   const generator = useShotGenerator();
   const upsertAssets = useStore((s) => s.upsertAssets);
   const maxSeconds = maxDuration(useStore((s) => s.capabilities).video);
@@ -198,6 +198,7 @@ const ShotCard = memo(function ShotCard({
         open={picking}
         onClose={() => setPicking(false)}
         title="选择关键帧"
+        storyId={storyId}
         onPick={([asset]) => {
           // 选中的已有图片直接作为本镜关键帧，后续图生视频以它为首帧
           upsertAssets([asset]);

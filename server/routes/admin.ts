@@ -27,6 +27,8 @@ import {
 } from '../providers/index.ts';
 import { getTask, toTask, toUser } from '../repo.ts';
 import { kickScheduler } from '../scheduler.ts';
+import { toJob } from '../jobs/runner.ts';
+import { purgeTrash, startLibraryBackfill } from '../library/derive.ts';
 import { getSecret, masterKeySource, setSecret } from '../secrets.ts';
 import { bad, parse } from './common.ts';
 
@@ -705,5 +707,26 @@ export async function adminRoutes(admin: FastifyInstance): Promise<void> {
     const { name, bytes, createdAt } = await backupNow();
     audit(request, 'backup.create', name, '');
     return { name, bytes, createdAt };
+  });
+
+  // ---- 资产库维护 ----
+  /** 立即清理：回收站里过期的素材、24 小时没传完的分片 */
+  admin.post('/api/admin/library/cleanup', async (request) => {
+    const purged = await purgeTrash();
+    audit(request, 'library.cleanup', null, `彻底删除 ${purged} 个过期素材`);
+    return { purged };
+  });
+
+  /** 重新生成全部缩略图和封面（换了带 ffmpeg 的镜像之后用） */
+  admin.post('/api/admin/library/rederive', async (request) => {
+    const result = db.prepare("UPDATE assets SET derive_state = 'pending' WHERE deleted_at IS NULL AND derive_state <> 'pending'").run();
+    startLibraryBackfill();
+    audit(request, 'library.rederive', null, `${result.changes} 个素材`);
+    return { queued: Number(result.changes) };
+  });
+
+  admin.get('/api/admin/jobs', async () => {
+    const rows = db.prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 200').all() as Row[];
+    return rows.map(toJob);
   });
 }

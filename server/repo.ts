@@ -23,15 +23,18 @@ export function assetUrl(id: string): string {
   return `/api/files/${id}`;
 }
 
-export function toAsset(row: Row): Asset {
+export function toAsset(row: Row, tags: string[] = []): Asset {
   const id = String(row.id);
+  const url = assetUrl(id);
   return {
     id,
     kind: row.kind as Asset['kind'],
     source: row.source as Asset['source'],
     mime: String(row.mime),
-    url: assetUrl(id),
-    thumbUrl: assetUrl(id),
+    url,
+    // 有缩略图时网格只加载缩略图（几十 KB），没有时退回原文件
+    thumbUrl: row.thumb ? `${url}?variant=thumb` : url,
+    posterUrl: row.poster ? `${url}?variant=poster` : null,
     width: row.width == null ? null : Number(row.width),
     height: row.height == null ? null : Number(row.height),
     prompt: (row.prompt as string | null) ?? null,
@@ -42,9 +45,47 @@ export function toAsset(row: Row): Asset {
     duration: row.duration == null ? null : Number(row.duration),
     gen: parseJson<Asset['gen']>(row.gen, null),
     parentAssetId: (row.parent_asset_id as string | null) ?? null,
+    lineage: (row.lineage as Asset['lineage']) ?? (row.parent_asset_id ? 'derive' : null),
     favorite: Number(row.favorite) === 1,
+    size: row.size == null ? null : Number(row.size),
+    rating: Number(row.rating ?? 0),
+    flag: (row.flag as Asset['flag']) ?? null,
+    note: String(row.note ?? ''),
+    folderId: (row.folder_id as string | null) ?? null,
+    tags,
+    filename: (row.filename as string | null) ?? null,
+    deletedAt: row.deleted_at == null ? null : Number(row.deleted_at),
     createdAt: Number(row.created_at),
   };
+}
+
+/** 一批资产的标签名（列表接口一次查完，避免逐条查询） */
+export function tagsFor(assetIds: string[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  if (assetIds.length === 0) return map;
+  for (let i = 0; i < assetIds.length; i += 500) {
+    const chunk = assetIds.slice(i, i + 500);
+    const rows = db
+      .prepare(`SELECT at.asset_id, t.name FROM asset_tags at JOIN tags t ON t.id = at.tag_id WHERE at.asset_id IN (${chunk.map(() => '?').join(',')}) ORDER BY t.name`)
+      .all(...chunk) as Row[];
+    for (const row of rows) {
+      const list = map.get(String(row.asset_id)) ?? [];
+      list.push(String(row.name));
+      map.set(String(row.asset_id), list);
+    }
+  }
+  return map;
+}
+
+/** 行转资产并带上标签 */
+export function toAssets(rows: Row[]): Asset[] {
+  const tags = tagsFor(rows.map((row) => String(row.id)));
+  return rows.map((row) => toAsset(row, tags.get(String(row.id)) ?? []));
+}
+
+export function loadAsset(id: string): Asset | null {
+  const row = getAssetRow(id);
+  return row ? toAsset(row, tagsFor([id]).get(id) ?? []) : null;
 }
 
 export function toTask(row: Row): Task {

@@ -1,6 +1,13 @@
 import type {
   Asset,
+  AssetFolder,
+  AssetQuery,
+  AssetTag,
+  AssetUsage,
   AssistKind,
+  Job,
+  SavedSearch,
+  StorageUsage,
   ProviderHealth,
   Story,
   StoryData,
@@ -74,6 +81,39 @@ export interface NewTask {
   link?: TaskLink;
   priority?: number;
   runNow?: boolean;
+}
+
+export type BatchAction = 'favorite' | 'rating' | 'flag' | 'move' | 'addTags' | 'removeTags' | 'trash' | 'restore' | 'purge';
+
+export interface AssetFacets {
+  total: number;
+  kinds: Record<string, number>;
+  sources: Record<string, number>;
+  flags: Record<string, number>;
+  favorite: number;
+  ratings: Record<string, number>;
+  tags: { id: string; name: string; count: number }[];
+  stories: { id: string; title: string; count: number }[];
+}
+
+export interface AssetDetail {
+  asset: Asset;
+  codec: string | null;
+  sha256: string | null;
+  meta: { png?: { prompt?: string; negative?: string; seed?: number; keys?: string[] } } | null;
+  folderPath: string[];
+  story: { id: string; title: string } | null;
+  task: { id: string; title: string; type: string; status: string; createdAt: number; finishedAt: number | null } | null;
+}
+
+/** AssetQuery → URL 参数（布尔值写成 1，空值省略） */
+export function assetParams(query: AssetQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '' || value === false) continue;
+    params.set(key, value === true ? '1' : String(value));
+  }
+  return params;
 }
 
 export const api = {
@@ -152,7 +192,44 @@ export const api = {
     return request<Asset>('POST', '/api/assets/upload', form);
   },
   favorite: (id: string, favorite: boolean) => request<Asset>('PATCH', `/api/assets/${id}`, { favorite }),
-  deleteAsset: (id: string) => request('DELETE', `/api/assets/${id}`),
+  deleteAsset: (id: string) => request<{ ok: true; trashed?: boolean; purged?: boolean }>('DELETE', `/api/assets/${id}`),
+
+  // 资产库 2.0
+  library: (query: AssetQuery, cursor?: string | null, limit = 120) => {
+    const params = assetParams(query);
+    params.set('page', '1');
+    params.set('limit', String(limit));
+    if (cursor) params.set('cursor', cursor);
+    return request<{ items: Asset[]; next: string | null }>('GET', `/api/assets?${params}`);
+  },
+  facets: (query: AssetQuery) => request<AssetFacets>('GET', `/api/assets/facets?${assetParams(query)}`),
+  patchAsset: (id: string, patch: { favorite?: boolean; rating?: number; flag?: 'pick' | 'reject' | null; note?: string; folderId?: string | null; tags?: string[] }) =>
+    request<Asset>('PATCH', `/api/assets/${id}`, patch),
+  batchAssets: (target: { ids?: string[]; query?: AssetQuery }, action: BatchAction, value?: unknown) =>
+    request<{ count: number; blocked: { id: string; reason: string }[] }>('POST', '/api/assets/batch', { ...target, action, value }),
+  emptyTrash: () => request<{ count: number }>('POST', '/api/assets/trash/empty'),
+  assetUsage: (id: string) => request<AssetUsage>('GET', `/api/assets/${id}/usage`),
+  assetsUsage: (ids: string[]) => request<AssetUsage[]>('POST', '/api/assets/usage', { ids }),
+  assetLineage: (id: string) => request<{ parents: Asset[]; children: Asset[] }>('GET', `/api/assets/${id}/lineage`),
+  assetDetail: (id: string) => request<AssetDetail>('GET', `/api/assets/${id}/detail`),
+  frame: (id: string, at: number | 'last') => request<Asset>('POST', `/api/assets/${id}/frame`, { at }),
+  exportAssets: (target: { ids?: string[]; query?: AssetQuery }, name?: string) =>
+    request<{ url: string; count: number; bytes: number }>('POST', '/api/assets/export', { ...target, name }),
+  folders: () => request<AssetFolder[]>('GET', '/api/folders'),
+  createFolder: (name: string, parentId: string | null) => request<AssetFolder>('POST', '/api/folders', { name, parentId }),
+  updateFolder: (id: string, patch: { name?: string; parentId?: string | null }) => request<AssetFolder>('PATCH', `/api/folders/${id}`, patch),
+  deleteFolder: (id: string) => request('DELETE', `/api/folders/${id}`),
+  tags: () => request<AssetTag[]>('GET', '/api/tags'),
+  renameTag: (id: string, name: string) => request<AssetTag[]>('PATCH', `/api/tags/${id}`, { name }),
+  deleteTag: (id: string) => request('DELETE', `/api/tags/${id}`),
+  savedSearches: () => request<SavedSearch[]>('GET', '/api/saved-searches'),
+  saveSearch: (name: string, query: AssetQuery) => request<SavedSearch>('POST', '/api/saved-searches', { name, query }),
+  deleteSavedSearch: (id: string) => request('DELETE', `/api/saved-searches/${id}`),
+  storageUsage: () => request<StorageUsage>('GET', '/api/storage/usage'),
+  duplicates: () => request<{ sha256: string; keepId: string; assets: Asset[] }[]>('GET', '/api/assets/duplicates'),
+  mergeDuplicates: (sha256?: string[]) => request<{ groups: number; removed: number }>('POST', '/api/assets/duplicates/merge', { sha256 }),
+  job: (id: string) => request<Job>('GET', `/api/jobs/${id}`),
+  cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${id}/cancel`),
 
   stories: () => request<StorySummary[]>('GET', '/api/stories'),
   createStory: (title: string, logline: string) => request<Story>('POST', '/api/stories', { title, logline }),

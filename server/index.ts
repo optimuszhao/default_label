@@ -6,6 +6,8 @@ import { purgeExpiredSessions } from './auth.ts';
 import { startBackups } from './backup.ts';
 import { config } from './config.ts';
 import { cleanTempDir } from './files.ts';
+import { startJobs } from './jobs/runner.ts';
+import { startLibraryBackfill } from './library/derive.ts';
 import { logger } from './log.ts';
 import { startScheduler } from './scheduler.ts';
 
@@ -13,6 +15,8 @@ const app = await buildApp();
 
 await cleanTempDir();
 const stopScheduler = startScheduler();
+const stopJobs = startJobs();
+startLibraryBackfill();
 const stopBackups = startBackups();
 purgeExpiredSessions();
 setInterval(purgeExpiredSessions, 6 * 3600 * 1000).unref();
@@ -29,6 +33,7 @@ logger.info({ port: config.port, provider: config.provider, version: config.appV
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
     stopScheduler();
+    stopJobs();
     stopBackups();
     await app.close();
     fs.rmSync(heartbeat, { force: true });

@@ -3,7 +3,7 @@
 export type TaskType = 't2i' | 'i2i' | 't2v' | 'i2v';
 export type TaskStatus = 'queued' | 'paused' | 'running' | 'succeeded' | 'failed' | 'canceled';
 export type Capability = 'image' | 'video' | 'llm';
-export type MediaKind = 'image' | 'video';
+export type MediaKind = 'image' | 'video' | 'audio';
 
 export const TASK_TYPE_LABEL: Record<TaskType, string> = {
   t2i: '文生图',
@@ -184,9 +184,98 @@ export interface Asset {
   duration: number | null;
   /** 生成配方：实际使用的种子和参数，用于复现 */
   gen: GenInfo | null;
-  /** 派生来源（变体、以此为参考、图转视频） */
+  /** 派生来源（变体、以此为参考、图转视频、截帧） */
   parentAssetId: string | null;
+  /** 和来源的关系：derive 派生；frame 截帧 */
+  lineage: 'derive' | 'frame' | null;
+  /** 视频封面（0.5 秒处一帧）；没有 ffmpeg 或不是视频时为空 */
+  posterUrl: string | null;
+  /** 字节数 */
+  size: number | null;
+  /** 0–5 星 */
+  rating: number;
+  /** pick 挑选 / reject 淘汰 */
+  flag: 'pick' | 'reject' | null;
+  note: string;
+  folderId: string | null;
+  tags: string[];
+  /** 上传时的原文件名 */
+  filename: string | null;
+  /** 进入回收站的时间 */
+  deletedAt: number | null;
   createdAt: number;
+}
+
+/** 资产库查询条件（列表、分面、批量操作、智能文件夹共用） */
+export interface AssetQuery {
+  q?: string;
+  kind?: MediaKind | '';
+  source?: Asset['source'] | '';
+  folder?: string;
+  tag?: string;
+  storyId?: string;
+  favorite?: boolean;
+  minRating?: number;
+  flag?: 'pick' | 'reject' | 'none' | '';
+  /** 最近 N 天 */
+  days?: number;
+  /** 没放进任何文件夹 */
+  unfiled?: boolean;
+  trash?: boolean;
+  sort?: 'new' | 'old' | 'rating' | 'size';
+}
+
+export interface AssetFolder {
+  id: string;
+  parentId: string | null;
+  name: string;
+  count: number;
+}
+
+export interface AssetTag {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: AssetQuery;
+}
+
+/** 素材被哪里用到（删除前提示） */
+export interface AssetUsage {
+  assetId: string;
+  /** 被排队或生成中的任务引用：不能删除 */
+  activeTasks: { id: string; title: string }[];
+  /** 故事里的引用：镜头选定、角色参考图、设定 */
+  stories: { storyId: string; title: string; where: string }[];
+}
+
+export interface StorageUsage {
+  total: { count: number; bytes: number };
+  byKind: { kind: string; count: number; bytes: number }[];
+  byMonth: { month: string; count: number; bytes: number }[];
+  byStory: { storyId: string | null; title: string; count: number; bytes: number }[];
+  trash: { count: number; bytes: number };
+  duplicates: { groups: number; wasted: number };
+  disk: { free: number; total: number } | null;
+}
+
+/** 后台作业（缩略图、迁移、成片渲染……） */
+export interface Job {
+  id: string;
+  kind: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  progress: number;
+  stage: string | null;
+  error: string | null;
+  result: Record<string, unknown> | null;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
 }
 
 export interface GenInfo {
@@ -318,4 +407,9 @@ export type ServerEvent =
   | { type: 'task'; task: Task }
   | { type: 'task-removed'; id: string }
   | { type: 'health'; health: ProviderHealth }
-  | { type: 'asset'; asset: Asset };
+  | { type: 'asset'; asset: Asset }
+  /** 进入回收站（at 为时间）或从回收站恢复（at 为 null） */
+  | { type: 'assets-trashed'; ids: string[]; at: number | null }
+  /** 彻底删除 */
+  | { type: 'assets-removed'; ids: string[] }
+  | { type: 'job'; job: Job };

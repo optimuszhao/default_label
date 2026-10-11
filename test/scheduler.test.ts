@@ -62,7 +62,8 @@ describe('种子', () => {
 });
 
 describe('下载', () => {
-  test('大视频流式落盘：内存不随文件变大，期间图片任务照常完成，记录超分后的真实尺寸', async () => {
+  // 读 /proc 取内存峰值，只在 Linux（CI、NAS）上跑
+  test('大视频流式落盘：内存不随文件变大，期间图片任务照常完成，记录超分后的真实尺寸', { skip: process.platform !== 'linux' }, async () => {
     // 先下一个 40 MB 的视频预热（首次下载会分配一批缓冲区），再测 80 MB 的峰值增量
     await h.scenario({ videoSizeMb: 40 });
     const warm = await user.post('/api/tasks', { type: 't2v', prompt: '预热', params: VIDEO_PARAMS });

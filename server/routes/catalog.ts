@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { allPresets, allTemplates, catalogVersion, templateScores } from '../catalog.ts';
 import { db, newId, now, type Row } from '../db.ts';
-import { toAsset, toTask } from '../repo.ts';
+import { toAssets, toTask } from '../repo.ts';
 import { bad, parse, uid } from './common.ts';
 
 export async function catalogRoutes(api: FastifyInstance): Promise<void> {
@@ -121,7 +121,7 @@ export async function catalogRoutes(api: FastifyInstance): Promise<void> {
     }
     const ids = [...assetIds];
     const assets = ids.length
-      ? (db.prepare(`SELECT * FROM assets WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`).all(uid(request), ...ids) as Row[]).map(toAsset)
+      ? toAssets(db.prepare(`SELECT * FROM assets WHERE user_id = ? AND deleted_at IS NULL AND id IN (${ids.map(() => '?').join(',')})`).all(uid(request), ...ids) as Row[])
       : [];
     const last = page.at(-1);
     return { tasks: page, assets, next: rows.length > limit && last ? `${last.createdAt}:${last.id}` : null };

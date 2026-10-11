@@ -1,166 +1,420 @@
+// 资产库 2.0：左侧视图 / 文件夹 / 标签 / 智能文件夹，中间搜索筛选和虚拟网格，右侧详情抽屉。
+// 手机端：侧栏和详情都是底部弹出的面板，长按进入多选。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Heart, ImageOff, Play, Upload } from 'lucide-react';
-import type { Asset } from '../../../../shared/types.ts';
-import { useUpload } from '../../components/AssetPicker.tsx';
+import { useSearchParams } from 'react-router-dom';
+import { Bookmark, ImageOff, PanelLeft, Search, Upload, X } from 'lucide-react';
+import type { AssetFolder, AssetQuery, AssetTag, SavedSearch, StorageUsage } from '../../../../shared/types.ts';
+import { AssetDetail } from '../../components/library/AssetDetail.tsx';
+import { AssetGrid, type GridSelection } from '../../components/library/AssetGrid.tsx';
+import { BatchBar } from '../../components/library/BatchBar.tsx';
+import { LibrarySidebar, scopeQuery, type Scope } from '../../components/library/LibrarySidebar.tsx';
+import { StorageDialog } from '../../components/library/StorageDialog.tsx';
+import { useLibrary } from '../../components/library/useLibrary.ts';
+import { promptDialog } from '../../components/ConfirmDialog.tsx';
 import { Lightbox } from '../../components/Lightbox.tsx';
-import { Button, Empty, Media, Segmented, Spinner, isVideoAsset } from '../../components/ui.tsx';
+import { Button, Empty, Modal, Segmented } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { reportError, useStore } from '../../lib/store.ts';
-import { cx } from '../../lib/util.ts';
+import { ACCEPT_MEDIA, uploadFile } from '../../lib/upload.ts';
+import { cx, useDebouncedCallback, useMediaQuery } from '../../lib/util.ts';
 
-type Filter = 'all' | 'image' | 'video' | 'favorite' | 'upload';
-const PAGE = 60;
+type KindFilter = '' | 'image' | 'video' | 'audio';
+
+function parseScope(raw: string | null): Scope {
+  if (!raw) return { type: 'all' };
+  const [type, id] = raw.split(':');
+  if ((type === 'folder' || type === 'tag' || type === 'saved' || type === 'story') && id) return { type, id };
+  if (['all', 'recent', 'favorite', 'pick', 'unfiled', 'trash'].includes(type)) return { type: type as 'all' };
+  return { type: 'all' };
+}
+
+function scopeKey(scope: Scope): string {
+  return 'id' in scope ? `${scope.type}:${scope.id}` : scope.type;
+}
+
+interface UploadItem {
+  key: string;
+  name: string;
+  progress: number;
+  error?: string;
+}
+
+const EMPTY_SELECTION: GridSelection = { selected: new Set(), selecting: false };
 
 export default function Assets() {
-  const [filter, setFilter] = useState<Filter>('all');
-  const [ids, setIds] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hasMore, setHasMore] = useState(true);
-  const [viewing, setViewing] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const scope = parseScope(params.get('scope'));
+  const detailId = params.get('asset');
+  const [kind, setKind] = useState<KindFilter>('');
+  const [sort, setSort] = useState<AssetQuery['sort']>('new');
+  const [minRating, setMinRating] = useState(0);
+  const [search, setSearch] = useState('');
+  const [q, setQ] = useState('');
+  const [folders, setFolders] = useState<AssetFolder[]>([]);
+  const [tags, setTags] = useState<AssetTag[]>([]);
+  const [saved, setSaved] = useState<SavedSearch[]>([]);
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
+  const [selection, setSelection] = useState<GridSelection>(EMPTY_SELECTION);
+  const [allMatching, setAllMatching] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [viewer, setViewer] = useState<string | null>(null);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const assets = useStore((s) => s.assets);
   const upsertAssets = useStore((s) => s.upsertAssets);
-  const { upload, uploading } = useUpload();
-  const inputRef = useRef<HTMLInputElement>(null);
-  const sentinel = useRef<HTMLDivElement>(null);
+  const toast = useStore((s) => s.toast);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const applySearch = useDebouncedCallback((value: string) => setQ(value.trim()), 300);
+  const desktop = useMediaQuery('(min-width: 1024px)');
 
-  const query = useMemo(
-    () => ({
-      kind: filter === 'image' || filter === 'video' ? filter : undefined,
-      favorite: filter === 'favorite',
-      source: filter === 'upload' ? 'upload' : undefined,
-    }),
-    [filter],
-  );
+  const query = useMemo<AssetQuery>(() => {
+    const base = scopeQuery(scope, saved);
+    return {
+      ...base,
+      ...(kind ? { kind } : {}),
+      ...(q ? { q: [base.q, q].filter(Boolean).join(' ') } : {}),
+      ...(minRating ? { minRating: Math.max(minRating, base.minRating ?? 0) } : {}),
+      ...(sort && sort !== 'new' ? { sort } : {}),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeKey(scope), saved, kind, q, minRating, sort]);
 
-  const load = useCallback(
-    async (before?: string) => {
-      setLoading(true);
+  const library = useLibrary(query);
+
+  const loadMeta = useCallback(async () => {
+    try {
+      const [f, t, s, u] = await Promise.all([api.folders(), api.tags(), api.savedSearches(), api.storageUsage()]);
+      setFolders(f);
+      setTags(t);
+      setSaved(s);
+      setUsage(u);
+    } catch (error) {
+      reportError(error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMeta();
+  }, [loadMeta]);
+
+  // 条件变化：清空选择，更新总数（"选中全部"用）
+  const queryKey = JSON.stringify(query);
+  useEffect(() => {
+    setSelection(EMPTY_SELECTION);
+    setAllMatching(false);
+    setTotal(null);
+    void api.facets(query).then((f) => setTotal(f.total)).catch(() => undefined);
+    scrollRef.current?.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryKey]);
+
+  function setScope(next: Scope) {
+    setSidebarOpen(false);
+    setParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next.type === 'all') p.delete('scope');
+      else p.set('scope', scopeKey(next));
+      p.delete('asset');
+      return p;
+    });
+  }
+
+  function openDetail(id: string | null) {
+    setParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (id) p.set('asset', id);
+      else p.delete('asset');
+      return p;
+    }, { replace: true });
+  }
+
+  // 详情里的素材不在缓存中（从深链接打开）：单独拉一次
+  useEffect(() => {
+    if (detailId && !assets[detailId]) void api.asset(detailId).then((a) => upsertAssets([a])).catch(() => openDetail(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailId]);
+
+  // Esc 取消选择；⌘A 全选已加载的
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (event.key === 'Escape' && selection.selected.size) setSelection(EMPTY_SELECTION);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        setSelection({ selected: new Set(library.ids), selecting: true });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selection.selected.size, library.ids]);
+
+  async function onFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (!list.length) return;
+    const folderId = scope.type === 'folder' ? scope.id : null;
+    const items = list.map((file, i) => ({ key: `${Date.now()}-${i}-${file.name}`, name: file.name, progress: 0 }));
+    setUploads((prev) => [...prev, ...items]);
+    let duplicates = 0;
+    for (const [i, file] of list.entries()) {
+      const key = items[i].key;
       try {
-        const page = await api.assets({ ...query, before, limit: PAGE });
-        upsertAssets(page);
-        setIds((prev) => (before ? [...prev, ...page.map((a) => a.id)] : page.map((a) => a.id)));
-        setHasMore(page.length === PAGE);
+        const result = await uploadFile(file, {
+          folderId,
+          onProgress: (progress) => setUploads((prev) => prev.map((item) => (item.key === key ? { ...item, progress } : item))),
+        });
+        upsertAssets([result.asset]);
+        library.prepend([result.asset.id]);
+        if (result.duplicate) duplicates++;
+        setUploads((prev) => prev.filter((item) => item.key !== key));
       } catch (error) {
-        reportError(error);
-      } finally {
-        setLoading(false);
+        setUploads((prev) => prev.map((item) => (item.key === key ? { ...item, error: (error as Error).message } : item)));
       }
-    },
-    [query, upsertAssets],
+    }
+    if (duplicates) toast(`${duplicates} 个文件之前上传过，已直接使用原来的素材`, 'info');
+    void loadMeta();
+  }
+
+  async function saveSearch() {
+    const name = await promptDialog({ title: '保存为智能文件夹', placeholder: '例如：女主高分图', maxLength: 40, confirmText: '保存' });
+    if (!name) return;
+    try {
+      const { trash: _trash, ...rest } = query;
+      await api.saveSearch(name, rest);
+      void loadMeta();
+      toast('已保存到左侧"智能文件夹"', 'success');
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  const selectedIds = [...selection.selected];
+  const titles: Record<string, string> = { all: '全部素材', recent: '最近 7 天', favorite: '收藏', pick: '已挑选', unfiled: '未归档', trash: '回收站' };
+  const title =
+    scope.type === 'folder'
+      ? folders.find((f) => f.id === scope.id)?.name ?? '文件夹'
+      : scope.type === 'tag'
+        ? `#${tags.find((t) => t.id === scope.id)?.name ?? '标签'}`
+        : scope.type === 'saved'
+          ? saved.find((s) => s.id === scope.id)?.name ?? '智能文件夹'
+          : scope.type === 'story'
+            ? '故事素材'
+            : titles[scope.type];
+  const filtered = Boolean(q || kind || minRating || (sort && sort !== 'new'));
+
+  const sidebar = (
+    <LibrarySidebar
+      scope={scope}
+      onScope={setScope}
+      folders={folders}
+      tags={tags}
+      saved={saved}
+      usage={usage}
+      onChanged={() => void loadMeta()}
+      onMoved={() => library.refresh()}
+      onOpenStorage={() => setStorageOpen(true)}
+    />
   );
 
-  useEffect(() => {
-    setIds([]);
-    void load();
-  }, [load]);
-
-  // 生成完成的新资产实时出现在列表顶部
-  const knownIds = useRef(new Set<string>());
-  useEffect(() => {
-    knownIds.current = new Set(ids);
-  }, [ids]);
-  useEffect(() => {
-    const fresh = Object.values(assets).filter(
-      (asset) =>
-        !knownIds.current.has(asset.id) &&
-        Date.now() - asset.createdAt < 60_000 &&
-        (filter === 'all' || filter === asset.kind || (filter === 'upload' && asset.source === 'upload')),
-    );
-    if (fresh.length) setIds((prev) => [...fresh.map((a) => a.id), ...prev.filter((id) => !fresh.some((a) => a.id === id))]);
-  }, [assets, filter]);
-
-  // 无限滚动
-  useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !hasMore) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !loading) {
-        const last = assets[ids[ids.length - 1]];
-        if (last) void load(`${last.createdAt}:${last.id}`);
-      }
-    }, { rootMargin: '600px' });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [hasMore, loading, ids, assets, load]);
-
-  const items = ids
-    .map((id) => assets[id])
-    .filter((asset): asset is Asset => Boolean(asset))
-    .filter((asset) => filter !== 'favorite' || asset.favorite);
+  const detail = detailId && assets[detailId] && (
+    <AssetDetail
+      assetId={detailId}
+      folders={folders}
+      onClose={() => openDetail(null)}
+      onOpenViewer={setViewer}
+      onNavigate={(id) => openDetail(id)}
+      onChanged={() => void loadMeta()}
+    />
+  );
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 md:py-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">资产库</h1>
-          <p className="mt-1 text-sm text-fg-3">所有生成和上传的图片、视频。点击查看，可直接用于图生图或图生视频。</p>
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
-          hidden
-          onChange={async (e) => {
-            if (!e.target.files?.length) return;
-            const uploaded = await upload(e.target.files);
-            setIds((prev) => [...uploaded.map((a) => a.id), ...prev]);
-            e.target.value = '';
-          }}
-        />
-        <Button icon={<Upload className="size-4" />} loading={uploading} onClick={() => inputRef.current?.click()}>上传素材</Button>
-      </div>
+    <div
+      className="flex h-[calc(100dvh-3.5rem-76px-env(safe-area-inset-bottom))] md:h-dvh"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes('Files')) {
+          event.preventDefault();
+          setDragOver(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragOver(false);
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files.length) return;
+        event.preventDefault();
+        setDragOver(false);
+        void onFiles(event.dataTransfer.files);
+      }}
+    >
+      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-line p-3 xl:block">{sidebar}</aside>
 
-      <div className="no-scrollbar -mx-4 mt-6 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-        <Segmented
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { value: 'all', label: '全部' },
-            { value: 'image', label: '图片' },
-            { value: 'video', label: '视频' },
-            { value: 'favorite', label: '收藏' },
-            { value: 'upload', label: '我的上传' },
-          ]}
-        />
-      </div>
-
-      <div className="mt-5">
-        {!loading && items.length === 0 ? (
-          <Empty icon={<ImageOff className="size-6" />} title="这里还空空如也" hint="去创作页生成第一张作品，或上传本地素材。" />
-        ) : (
-          <div className="columns-2 gap-2 sm:columns-3 sm:gap-3 lg:columns-4 xl:columns-5">
-            {items.map((asset) => (
-              <button
-                key={asset.id}
-                onClick={() => setViewing(asset.id)}
-                className="group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-xl border border-line bg-ink-2 sm:mb-3"
-                style={{ aspectRatio: asset.width && asset.height ? `${asset.width} / ${asset.height}` : '1 / 1' }}
-              >
-                <Media asset={asset} className="transition-transform duration-700 ease-[var(--ease-out-expo)] group-hover:scale-[1.03]" />
-                {(isVideoAsset(asset) || asset.kind === 'video') && (
-                  <span className="pointer-events-none absolute top-2 left-2 flex size-6 items-center justify-center rounded-full bg-black/55 backdrop-blur">
-                    <Play className="size-3 fill-current" />
-                  </span>
-                )}
-                {asset.favorite && <Heart className="absolute top-2 right-2 size-4 fill-pink text-pink drop-shadow" />}
-                {asset.prompt && (
-                  <span className={cx('pointer-events-none absolute inset-x-0 bottom-0 line-clamp-2 bg-black/70 p-2.5 text-left text-[11px] text-white/85 opacity-0 transition-opacity group-hover:opacity-100')}>
-                    {asset.prompt}
-                  </span>
-                )}
+      <section className="relative flex min-w-0 flex-1 flex-col">
+        <header className="space-y-3 border-b border-line px-3 py-3 sm:px-4">
+          <div className="flex items-center gap-2">
+            <button aria-label="打开资产库导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-fg-2 hover:bg-white/[0.06] xl:hidden">
+              <PanelLeft className="size-4" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+              <p className="text-xs text-fg-3">
+                {total === null ? '…' : `${total} 个素材`}
+                {scope.type === 'trash' && ' · 30 天后自动彻底删除'}
+              </p>
+            </div>
+            <input ref={fileInput} type="file" multiple accept={ACCEPT_MEDIA} hidden onChange={(e) => { if (e.target.files) void onFiles(e.target.files); e.target.value = ''; }} />
+            {scope.type !== 'trash' && (
+              <Button size="sm" icon={<Upload className="size-4" />} onClick={() => fileInput.current?.click()}>
+                上传
+              </Button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative min-w-40 flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-3" />
+              <input
+                className="field !h-8 !pl-8 text-[13px]"
+                placeholder="搜索提示词、备注、标签、文件名"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  applySearch(e.target.value);
+                }}
+              />
+              {search && (
+                <button aria-label="清除搜索" onClick={() => { setSearch(''); setQ(''); }} className="absolute top-1/2 right-2 -translate-y-1/2 text-fg-3 hover:text-fg">
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </label>
+            <Segmented
+              size="sm"
+              value={kind}
+              onChange={setKind}
+              label="类型"
+              options={[
+                { value: '', label: '全部' },
+                { value: 'image', label: '图片' },
+                { value: 'video', label: '视频' },
+                { value: 'audio', label: '音频' },
+              ]}
+            />
+            <select aria-label="评分" className="field !h-8 !w-auto !py-0 text-xs" value={minRating} onChange={(e) => setMinRating(Number(e.target.value))}>
+              <option value={0}>不限评分</option>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>
+                  {n} 星以上
+                </option>
+              ))}
+            </select>
+            <select aria-label="排序" className="field !h-8 !w-auto !py-0 text-xs" value={sort} onChange={(e) => setSort(e.target.value as AssetQuery['sort'])}>
+              <option value="new">最新</option>
+              <option value="old">最早</option>
+              <option value="rating">评分</option>
+              <option value="size">文件大小</option>
+            </select>
+            {filtered && scope.type !== 'trash' && (
+              <button onClick={() => void saveSearch()} className="chip !h-8" title="把当前条件保存为智能文件夹">
+                <Bookmark className="size-3.5" /> 保存条件
               </button>
+            )}
+          </div>
+        </header>
+
+        {uploads.length > 0 && (
+          <div className="space-y-1 border-b border-line px-4 py-2">
+            {uploads.map((item) => (
+              <div key={item.key} className="flex items-center gap-2 text-xs">
+                <span className="w-40 truncate text-fg-2">{item.name}</span>
+                {item.error ? (
+                  <>
+                    <span className="flex-1 text-danger">{item.error}</span>
+                    <button className="text-fg-3 hover:text-fg" onClick={() => setUploads((prev) => prev.filter((u) => u.key !== item.key))}>
+                      <X className="size-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.08]">
+                      <span className="block h-full rounded-full bg-accent transition-[width]" style={{ width: `${Math.round(item.progress * 100)}%` }} />
+                    </span>
+                    <span className="w-10 text-right text-fg-3 tabular-nums">{Math.round(item.progress * 100)}%</span>
+                  </>
+                )}
+              </div>
             ))}
           </div>
         )}
-        <div ref={sentinel} className="flex justify-center py-8">{loading && <Spinner />}</div>
-      </div>
 
-      <Lightbox
-        asset={viewing ? assets[viewing] ?? null : null}
-        onClose={() => setViewing(null)}
-        onDeleted={(id) => setIds((prev) => prev.filter((item) => item !== id))}
-      />
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-28 sm:px-4">
+          {library.loaded && library.ids.length === 0 ? (
+            <Empty
+              icon={<ImageOff className="size-6" />}
+              title={scope.type === 'trash' ? '回收站是空的' : filtered ? '没有符合条件的素材' : '这里还空空如也'}
+              hint={scope.type === 'trash' ? '删除的素材会在这里保留 30 天。' : filtered ? '换个关键词或放宽筛选条件试试。' : '去创作页生成作品，或把本地图片、视频、音频拖到这里上传。'}
+            />
+          ) : (
+            <AssetGrid
+              ids={library.ids}
+              scrollRef={scrollRef}
+              selection={selection}
+              onSelectionChange={(next) => {
+                setSelection(next);
+                if (!next.selected.size) setAllMatching(false);
+              }}
+              onOpen={openDetail}
+              activeId={detailId}
+              hasMore={library.hasMore}
+              loading={library.loading}
+              onLoadMore={library.loadMore}
+            />
+          )}
+        </div>
+
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-accent/10 text-sm text-fg">
+            松开即可上传{scope.type === 'folder' ? `到「${title}」` : ''}
+          </div>
+        )}
+      </section>
+
+      {detail && desktop && <div className="w-80 shrink-0 border-l border-line xl:w-96">{detail}</div>}
+
+      {/* 窄屏：详情和导航用底部面板 */}
+      <Modal open={Boolean(detail) && !desktop} onClose={() => openDetail(null)} bare>
+        <div className={cx('panel h-[86dvh] overflow-hidden bg-ink-1')}>{detail}</div>
+      </Modal>
+      <Modal open={sidebarOpen} onClose={() => setSidebarOpen(false)} title="资产库">
+        {sidebar}
+      </Modal>
+      <StorageDialog open={storageOpen} onClose={() => setStorageOpen(false)} onChanged={() => { void loadMeta(); library.refresh(); }} />
+
+      {selection.selected.size > 0 && (
+        <BatchBar
+          ids={selectedIds}
+          allMatching={allMatching}
+          query={query}
+          total={total}
+          trash={scope.type === 'trash'}
+          folders={folders}
+          onSelectAll={() => setAllMatching(true)}
+          onClear={() => {
+            setSelection(EMPTY_SELECTION);
+            setAllMatching(false);
+          }}
+          onDone={(changed) => {
+            setSelection(EMPTY_SELECTION);
+            setAllMatching(false);
+            void loadMeta();
+            if (changed) library.refresh();
+            void api.facets(query).then((f) => setTotal(f.total)).catch(() => undefined);
+          }}
+        />
+      )}
+
+      <Lightbox asset={viewer ? (assets[viewer] ?? null) : null} onClose={() => setViewer(null)} list={library.ids.map((id) => assets[id]).filter(Boolean)} />
     </div>
   );
 }

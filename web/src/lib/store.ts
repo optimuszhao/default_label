@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { DEFAULT_CAPABILITIES, type Capabilities } from '../../../shared/operator.ts';
-import type { Asset, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
+import type { Asset, Job, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
 import { api, ApiError } from './api.ts';
 
 export interface ComposerDraft {
@@ -32,6 +32,9 @@ interface State {
   capabilities: Capabilities;
   tasks: Record<string, Task>;
   assets: Record<string, Asset>;
+  /** 被彻底删除的素材（各页面据此从列表里移除；进回收站的改 asset.deletedAt） */
+  removedAssets: Set<string>;
+  jobs: Record<string, Job>;
   composerDraft: ComposerDraft | null;
   toasts: Toast[];
 
@@ -60,6 +63,8 @@ export const useStore = create<State>((set, get) => ({
   capabilities: DEFAULT_CAPABILITIES,
   tasks: {},
   assets: {},
+  removedAssets: new Set(),
+  jobs: {},
   composerDraft: null,
   toasts: [],
 
@@ -112,6 +117,23 @@ export const useStore = create<State>((set, get) => ({
         break;
       case 'asset':
         state.upsertAssets([event.asset]);
+        break;
+      case 'assets-trashed':
+        set((current) => {
+          const next = { ...current.assets };
+          for (const id of event.ids) if (next[id]) next[id] = { ...next[id], deletedAt: event.at };
+          return { assets: next };
+        });
+        break;
+      case 'assets-removed':
+        set((current) => {
+          const removed = new Set(current.removedAssets);
+          for (const id of event.ids) removed.add(id);
+          return { removedAssets: removed };
+        });
+        break;
+      case 'job':
+        set((current) => ({ jobs: { ...current.jobs, [event.job.id]: event.job } }));
         break;
       case 'health':
         state.setHealth(event.health);

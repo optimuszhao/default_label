@@ -96,3 +96,16 @@ export function downloadUrl(url: string, filename: string): void {
   link.click();
   link.remove();
 }
+
+/** 媒体查询是否命中（随窗口大小变化更新） */
+export function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const onChange = () => setMatches(list.matches);
+    onChange();
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}

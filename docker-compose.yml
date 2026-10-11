@@ -13,6 +13,9 @@ services:
       args:
         # Docker Hub 访问慢时可换成镜像源，例如 docker.m.daocloud.io/library/node:22-bookworm-slim
         NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+        # ffmpeg 用于缩略图、截帧、成片；Debian 源慢时设 APT_MIRROR，例如 mirrors.aliyun.com
+        WITH_FFMPEG: ${WITH_FFMPEG:-1}
+        APT_MIRROR: ${APT_MIRROR:-}
     image: weave-studio:latest
     container_name: weave
     restart: unless-stopped

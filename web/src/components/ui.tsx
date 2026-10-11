@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, CheckCircle2, Info, Loader2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, Loader2, Music, X } from 'lucide-react';
 import { TASK_STATUS_LABEL, type Asset, type TaskStatus } from '../../../shared/types.ts';
 import { useStore } from '../lib/store.ts';
 import { cx } from '../lib/util.ts';
@@ -294,29 +294,52 @@ export function isVideoAsset(asset: Pick<Asset, 'mime'>): boolean {
   return asset.mime.startsWith('video/');
 }
 
-/** 图片懒加载 + 解码完成后淡入；视频悬停播放，节省带宽和 GPU */
+/**
+ * 图片懒加载 + 解码完成后淡入；视频悬停播放，节省带宽和 GPU。
+ * variant="thumb"：网格里用，只加载缩略图 / 视频封面，不挂 <video>（素材多时不卡）。
+ */
 export function Media({
   asset,
   className,
   controls,
   autoPlay,
   fit = 'cover',
+  variant = 'full',
 }: {
-  asset: Pick<Asset, 'url' | 'mime' | 'prompt'>;
+  asset: Pick<Asset, 'url' | 'mime' | 'prompt'> & Partial<Pick<Asset, 'thumbUrl' | 'posterUrl' | 'filename'>>;
   className?: string;
   controls?: boolean;
   autoPlay?: boolean;
   fit?: 'cover' | 'contain';
+  variant?: 'full' | 'thumb';
 }) {
   const [loaded, setLoaded] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fitClass = fit === 'cover' ? 'object-cover' : 'object-contain';
-  if (isVideoAsset(asset)) {
+  if (asset.mime.startsWith('audio/')) {
+    if (controls) {
+      return (
+        <div className={cx('flex size-full flex-col items-center justify-center gap-4 bg-ink-2 p-6', className)}>
+          <Music className="size-10 text-fg-3" />
+          <audio src={asset.url} controls autoPlay={autoPlay} className="w-full max-w-md" />
+        </div>
+      );
+    }
+    return (
+      <div className={cx('flex size-full flex-col items-center justify-center gap-2 bg-ink-2 p-3 text-fg-3', className)}>
+        <Music className="size-6" />
+        {asset.filename && <span className="line-clamp-2 text-center text-[11px] break-all">{asset.filename}</span>}
+      </div>
+    );
+  }
+  const thumb = variant === 'thumb' && asset.thumbUrl && asset.thumbUrl.includes('variant=thumb') ? asset.thumbUrl : null;
+  if (isVideoAsset(asset) && !thumb) {
     return (
       <video
         ref={videoRef}
         src={asset.url}
-        className={cx('size-full bg-ink-2 transition-opacity duration-500', fitClass, loaded ? 'opacity-100' : 'opacity-0', className)}
+        poster={asset.posterUrl ?? undefined}
+        className={cx('size-full bg-ink-2 transition-opacity duration-500', fitClass, loaded || asset.posterUrl ? 'opacity-100' : 'opacity-0', className)}
         muted={!controls}
         loop
         playsInline
@@ -333,7 +356,7 @@ export function Media({
   }
   return (
     <img
-      src={asset.url}
+      src={thumb ?? asset.url}
       alt={asset.prompt ?? ''}
       loading="lazy"
       decoding="async"

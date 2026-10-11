@@ -10,7 +10,7 @@ import { capabilityOf, type Task } from '../shared/types.ts';
 import { publish } from './bus.ts';
 import { config } from './config.ts';
 import { db, now, type Row } from './db.ts';
-import { absoluteFile, deleteAssetFile, saveAsset } from './files.ts';
+import { absoluteFile, purgeAsset, saveAsset } from './files.ts';
 import { getAdapter, getHealth, markUnavailable, pickOperator, ProviderUnavailableError, type Provider, type ProviderImageInput, type ProviderOutput } from './providers/index.ts';
 import { logger } from './log.ts';
 import { getAssetRow, getTask, toAsset, toTask } from './repo.ts';
@@ -18,6 +18,31 @@ import { getAssetRow, getTask, toAsset, toTask } from './repo.ts';
 function emitTask(id: string): void {
   const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Row | undefined;
   if (row) publish(String(row.user_id), { type: 'task', task: toTask(row) });
+}
+
+type SettledListener = (task: Task) => void;
+const settledListeners = new Set<SettledListener>();
+
+/**
+ * 任务结束（成功、最终失败、取消、删除）时回调。故事批量（先关键帧再视频）和工作流引擎靠它推进。
+ * 回调在调度器内部同步执行，里面不要做耗时操作。
+ */
+export function onTaskSettled(listener: SettledListener): () => void {
+  settledListeners.add(listener);
+  return () => settledListeners.delete(listener);
+}
+
+/** 传 id 时读最新状态，只有真的结束了才通知；删除任务时直接传删除前的任务（状态记为已取消） */
+export function notifyTaskSettled(taskOrId: Task | string): void {
+  const task = typeof taskOrId === 'string' ? getTask(taskOrId) : taskOrId;
+  if (!task || !['succeeded', 'failed', 'canceled'].includes(task.status)) return;
+  for (const listener of settledListeners) {
+    try {
+      listener(task);
+    } catch (error) {
+      logger.error({ err: error, taskId: task.id }, '任务结束回调失败');
+    }
+  }
 }
 
 /**
@@ -94,6 +119,7 @@ function fail(task: Task, message: string): void {
     }, ['running', 'queued']);
   }
   emitTask(task.id);
+  notifyTaskSettled(task.id);
 }
 
 function resolveImages(task: Task): ProviderImageInput[] {
@@ -132,7 +158,7 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
     return;
   }
   const userId = userOf(task.id);
-  const saved: { id: string; file: string }[] = [];
+  const saved: { id: string }[] = [];
   try {
     for (const [index, output] of outputs.entries()) {
       // 多张图按顺序对应种子 base、base+1……（和提交时的拆分一致）
@@ -164,7 +190,7 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
         },
         parentAssetId: task.recipe?.parentAssetId ?? null,
       });
-      saved.push({ id: asset.id, file: String((db.prepare('SELECT file FROM assets WHERE id = ?').get(asset.id) as Row).file) });
+      saved.push({ id: asset.id });
     }
   } catch (error) {
     await discardOutputs(outputs);
@@ -186,8 +212,8 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
   if (!changed) {
     // 保存期间被取消：撤销刚保存的资产
     for (const item of saved) {
-      db.prepare('DELETE FROM assets WHERE id = ?').run(item.id);
-      await deleteAssetFile(item.file);
+      const row = getAssetRow(item.id);
+      if (row) await purgeAsset(row);
     }
     return;
   }
@@ -196,6 +222,7 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
     publish(userId, { type: 'asset', asset: toAsset(row) });
   }
   emitTask(task.id);
+  notifyTaskSettled(task.id);
 }
 
 /** 每个任务上次查询进度的时间，按适配器建议的间隔查询（图片几秒一次，视频十几秒一次） */
@@ -298,6 +325,7 @@ async function dispatch(): Promise<void> {
     } catch (error) {
       update(task.id, { status: 'failed', last_error: (error as Error).message, finished_at: now() });
       emitTask(task.id);
+      notifyTaskSettled(task.id);
       continue;
     }
     const seed = task.params.seed ?? randomSeed();
@@ -372,6 +400,8 @@ async function tick(): Promise<void> {
 }
 
 /** 手动触发后立即跑一个节拍，不用等定时器 */
+export { emitTask };
+
 export function kickScheduler(): void {
   setImmediate(() => void tick());
 }

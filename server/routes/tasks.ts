@@ -1,175 +1,13 @@
 // 生成任务与队列
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { compose } from '../../shared/compose.ts';
-import { clampDuration, resolveSize } from '../../shared/operator.ts';
 import type { Task } from '../../shared/types.ts';
-import { getTemplate, presetMap, recordTemplateUse } from '../catalog.ts';
-import { config } from '../config.ts';
-import { db, newId, now, type Row } from '../db.ts';
-import { capabilities, getAdapter } from '../providers/index.ts';
+import { db, now, type Row } from '../db.ts';
+import { getAdapter } from '../providers/index.ts';
 import { getTask, getTaskOwner, toTask } from '../repo.ts';
-import { kickScheduler } from '../scheduler.ts';
-import { bad, ownsAsset, parse, uid } from './common.ts';
-
-const paramsSchema = z.object({
-  aspectRatio: z.string().max(10),
-  resolution: z.string().max(10),
-  width: z.number().int().min(64).max(4096),
-  height: z.number().int().min(64).max(4096),
-  count: z.number().int().min(1).max(4),
-  seed: z.number().int().nullable(),
-  steps: z.number().int().min(1).max(150).optional(),
-  cfg: z.number().min(0).max(30).optional(),
-  strength: z.number().min(0).max(1).optional(),
-  duration: z.number().min(1).max(30).optional(),
-  fps: z.number().int().min(8).max(60).optional(),
-  cameraMotion: z.string().max(60).optional(),
-  model: z.string().max(60).optional(),
-});
-
-const taskSchema = z.object({
-  type: z.enum(['t2i', 'i2i', 't2v', 'i2v']),
-  title: z.string().max(120).optional(),
-  /** 有配方时由服务端编译，可以不传 */
-  prompt: z.string().trim().max(4000).default(''),
-  negativePrompt: z.string().max(2000).default(''),
-  params: paramsSchema,
-  inputs: z
-    .object({
-      referenceAssetIds: z.array(z.string()).max(4).optional(),
-      firstFrameAssetId: z.string().nullable().optional(),
-      lastFrameAssetId: z.string().nullable().optional(),
-    })
-    .default({}),
-  link: z
-    .object({
-      storyId: z.string().nullable().optional(),
-      shotId: z.string().nullable().optional(),
-      purpose: z.enum(['keyframe', 'video']).nullable().optional(),
-    })
-    .default({}),
-  priority: z.number().int().min(-10).max(10).default(0),
-  runNow: z.boolean().default(false),
-  recipe: z
-    .object({
-      version: z.number().int().default(1),
-      mode: z.enum(['image', 'video']),
-      text: z.string().max(4000).default(''),
-      templateId: z.string().max(80).nullable().optional(),
-      vars: z.record(z.string(), z.string().max(200)).optional(),
-      presets: z.array(z.string().max(80)).max(40).default([]),
-      negative: z.string().max(2000).default(''),
-      overrides: z
-        .object({
-          aspectRatio: z.string().max(10).optional(),
-          resolution: z.string().max(10).optional(),
-          count: z.number().int().min(1).max(4).optional(),
-          duration: z.number().min(1).max(30).optional(),
-          seed: z.number().int().nullable().optional(),
-          steps: z.number().int().min(1).max(150).optional(),
-          cameraMotion: z.string().max(60).optional(),
-        })
-        .default({}),
-      parentAssetId: z.string().max(40).nullable().optional(),
-    })
-    .optional(),
-});
-
-function insertTask(userId: string, input: z.infer<typeof taskSchema>): Task {
-  const id = newId('t_');
-  const ts = now();
-  db.prepare(
-    `INSERT INTO tasks (id, user_id, type, status, title, prompt, negative_prompt, params, inputs, story_id, shot_id, purpose,
-       max_attempts, priority, next_attempt_at, manual_kick, recipe, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    userId,
-    input.type,
-    input.title?.trim() || input.prompt.slice(0, 40),
-    input.prompt,
-    input.negativePrompt,
-    JSON.stringify(input.params),
-    JSON.stringify(input.inputs),
-    input.link.storyId ?? null,
-    input.link.shotId ?? null,
-    input.link.purpose ?? null,
-    config.maxAttempts,
-    input.priority,
-    0,
-    input.runNow ? 1 : 0,
-    input.recipe ? JSON.stringify(input.recipe) : null,
-    ts,
-    ts,
-  );
-  return getTask(id)!;
-}
-
-type TaskInput = z.infer<typeof taskSchema>;
-
-/**
- * 有配方时用编译器生成最终提示词和参数（和前端预览同一套逻辑，以服务端为准），
- * 记录模板使用；返回错误文字或编译后的任务输入。
- */
-function compileRecipe(userId: string, input: TaskInput, isAdmin: boolean): TaskInput | string {
-  const recipe = input.recipe;
-  if (!recipe) return input.prompt ? input : '请输入提示词';
-  const template = getTemplate(recipe.templateId);
-  if (recipe.templateId && !template) return '模板不存在或已下架';
-  const video = input.type === 't2v' || input.type === 'i2v';
-  if ((recipe.mode === 'video') !== video) return '配方模式和任务类型不一致';
-  if (recipe.parentAssetId && !ownsAsset(userId, recipe.parentAssetId)) return '来源素材不存在';
-  const result = compose({ recipe: { ...recipe, vars: recipe.vars ?? {} }, template, catalog: presetMap(), caps: capabilities(isAdmin) });
-  if (!result.prompt) return '请输入提示词，或选择一个模板';
-  if (template) recordTemplateUse(template.id, userId);
-  return {
-    ...input,
-    title: input.title || (template ? `${template.name} · ${result.prompt.slice(0, 24)}` : undefined),
-    prompt: result.prompt,
-    negativePrompt: result.negativePrompt,
-    params: { ...result.params, model: input.params.model },
-  };
-}
-
-/**
- * 按算子能力规整参数：去掉不起作用的参数，尺寸、时长、张数收进支持范围。
- * 前端已经按能力隐藏了控件，这里兜底旧客户端和故事批量生成。
- */
-function normalizeTask(input: TaskInput, isAdmin = false): TaskInput {
-  const caps = capabilities(isAdmin);
-  const video = input.type === 't2v' || input.type === 'i2v';
-  const cap = video ? caps.video : caps.image;
-  const params = { ...input.params };
-  if (!cap.strength) delete params.strength;
-  if (!cap.cfg) delete params.cfg;
-  if (!cap.steps) delete params.steps;
-  params.count = Math.min(Math.max(params.count, 1), cap.maxCount);
-  if (cap.sizes.length) Object.assign(params, resolveSize(cap, params.aspectRatio, params.resolution));
-  if (video && params.duration != null) params.duration = clampDuration(cap, params.duration);
-  const inputs = { ...input.inputs };
-  if (inputs.referenceAssetIds) inputs.referenceAssetIds = inputs.referenceAssetIds.slice(0, Math.max(caps.image.maxReferences, 0));
-  if (!caps.video.lastFrame) inputs.lastFrameAssetId = null;
-  return {
-    ...input,
-    negativePrompt: cap.negativePrompt ? input.negativePrompt : '',
-    params,
-    inputs,
-  };
-}
-
-function validateTaskInput(userId: string, input: z.infer<typeof taskSchema>): string | null {
-  const refs = [...(input.inputs.referenceAssetIds ?? []), input.inputs.firstFrameAssetId, input.inputs.lastFrameAssetId];
-  if (!refs.every((id) => ownsAsset(userId, id))) return '参考素材不存在';
-  if (input.type === 'i2i' && !input.inputs.referenceAssetIds?.length) return '图生图需要至少一张参考图';
-  if (input.type === 'i2v' && !input.inputs.firstFrameAssetId) return '图生视频需要首帧图片';
-  if (input.link.storyId) {
-    const story = db.prepare('SELECT user_id FROM stories WHERE id = ?').get(input.link.storyId) as Row | undefined;
-    if (!story || story.user_id !== userId) return '故事不存在';
-  }
-  return null;
-}
-
+import { emitTask, kickScheduler, notifyTaskSettled } from '../scheduler.ts';
+import { createTasks, insertTask, taskSchema, type TaskInput } from '../tasks/create.ts';
+import { bad, parse, uid } from './common.ts';
 
 function ownedTask(request: FastifyRequest, reply: FastifyReply): Task | null {
   const { id } = request.params as { id: string };
@@ -214,29 +52,17 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
   api.post('/api/tasks', async (request, reply) => {
     const body = parse(taskSchema, request.body, reply);
     if (!body) return;
-    const error = validateTaskInput(uid(request), body);
-    if (error) return bad(reply, error);
-    const compiled = compileRecipe(uid(request), body, request.user!.isAdmin);
-    if (typeof compiled === 'string') return bad(reply, compiled);
-    const task = insertTask(uid(request), normalizeTask(compiled, request.user!.isAdmin));
-    kickScheduler();
-    return task;
+    const result = createTasks(request.user!, [body]);
+    if (typeof result === 'string') return bad(reply, result);
+    return result[0];
   });
 
   api.post('/api/tasks/batch', async (request, reply) => {
     const body = parse(z.object({ tasks: z.array(taskSchema).min(1).max(200) }), request.body, reply);
     if (!body) return;
-    const compiled: TaskInput[] = [];
-    for (const item of body.tasks) {
-      const error = validateTaskInput(uid(request), item);
-      if (error) return bad(reply, error);
-      const result = compileRecipe(uid(request), item, request.user!.isAdmin);
-      if (typeof result === 'string') return bad(reply, result);
-      compiled.push(result);
-    }
-    const tasks = compiled.map((item) => insertTask(uid(request), normalizeTask(item, request.user!.isAdmin)));
-    kickScheduler();
-    return tasks;
+    const result = createTasks(request.user!, body.tasks);
+    if (typeof result === 'string') return bad(reply, result);
+    return result;
   });
 
   // 立即运行：无论是否开启自动调度，马上尝试提交一次
@@ -281,7 +107,10 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
         ?.cancel(String(row.provider_job_id))
         .catch(() => undefined);
     }
-    return setTask(task.id, { status: 'canceled', manual_kick: 0, provider_job_id: null, finished_at: now() });
+    const canceled = setTask(task.id, { status: 'canceled', manual_kick: 0, provider_job_id: null, finished_at: now() });
+    emitTask(task.id);
+    notifyTaskSettled(canceled);
+    return canceled;
   });
 
   api.post('/api/tasks/:id/retry', async (request, reply) => {
@@ -332,6 +161,7 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
     if (!task) return;
     if (task.status === 'running') return bad(reply, '生成中的任务请先取消');
     db.prepare('DELETE FROM tasks WHERE id = ?').run(task.id);
+    if (task.status === 'queued' || task.status === 'paused') notifyTaskSettled({ ...task, status: 'canceled' });
     return { ok: true };
   });
 

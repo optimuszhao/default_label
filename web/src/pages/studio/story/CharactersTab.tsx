@@ -183,6 +183,7 @@ export function CharactersTab() {
         open={picking !== null}
         onClose={() => setPicking(null)}
         title="选择角色参考图"
+        storyId={storyId}
         onPick={([asset]) =>
           update((d) => ({ ...d, characters: d.characters.map((c) => (c.id === picking ? { ...c, referenceAssetId: asset.id } : c)) }))
         }

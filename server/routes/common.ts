@@ -19,8 +19,9 @@ export function parse<T extends z.ZodType>(schema: T, body: unknown, reply: Fast
 
 export const uid = (request: FastifyRequest) => request.user!.id;
 
+/** 素材属于这个用户且不在回收站（回收站里的素材不能再拿来生成） */
 export function ownsAsset(userId: string, assetId: string | null | undefined): boolean {
   if (!assetId) return true;
   const row = getAssetRow(assetId);
-  return Boolean(row && row.user_id === userId);
+  return Boolean(row && row.user_id === userId && row.deleted_at == null);
 }

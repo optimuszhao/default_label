@@ -13,6 +13,7 @@ import {
   Heart,
   ImagePlus,
   RotateCcw,
+  Scissors,
   Save,
   Shuffle,
   SlidersHorizontal,
@@ -198,12 +199,31 @@ export function AssetViewer({
   }
 
   async function remove() {
-    if (!(await confirmDialog({ title: '删除这个素材？', message: '删除后无法恢复。', confirmText: '删除', danger: true }))) return;
     try {
+      const usage = await api.assetUsage(live!.id);
+      if (usage.activeTasks.length) {
+        toast(`正在被任务「${usage.activeTasks[0].title}」使用，不能删除`, 'error');
+        return;
+      }
+      const used = usage.stories.length ? `它正在被使用：${usage.stories.slice(0, 2).map((s) => `「${s.title}」${s.where}`).join('；')}。` : '';
+      if (!(await confirmDialog({ title: '移入回收站？', message: `${used}30 天内可以在资产库的回收站里恢复。`, confirmText: '移入回收站', danger: Boolean(used) }))) return;
       await api.deleteAsset(live!.id);
       removeAsset(live!.id);
       onDeleted?.(live!.id);
+      toast('已移入回收站', 'success');
       onClose();
+    } catch (error) {
+      reportError(error);
+    }
+  }
+
+  async function grabFrame() {
+    const video = document.querySelector<HTMLVideoElement>('[data-viewer-media] video');
+    const at = video ? video.currentTime : 0;
+    try {
+      const frame = await api.frame(live!.id, at);
+      upsertAssets([frame]);
+      toast(`已把 ${at.toFixed(1)} 秒处的画面存为图片`, 'success');
     } catch (error) {
       reportError(error);
     }
@@ -232,7 +252,7 @@ export function AssetViewer({
   return (
     <Modal open onClose={onClose} wide bare>
       <div className="panel flex max-h-[94dvh] flex-col overflow-hidden rounded-b-none bg-ink-1 sm:rounded-xl lg:flex-row">
-        <div className="relative flex min-h-[40dvh] flex-1 items-center justify-center bg-black lg:min-h-[70dvh]">
+        <div data-viewer-media className="relative flex min-h-[40dvh] flex-1 items-center justify-center bg-black lg:min-h-[70dvh]">
           <Media asset={live} fit="contain" controls={video} autoPlay={video} className="max-h-[60dvh] lg:max-h-[86dvh]" />
           <IconButton label="关闭" onClick={onClose} className="glass absolute top-3 right-3">
             <X className="size-4" />
@@ -324,9 +344,14 @@ export function AssetViewer({
             <IconButton label={live.favorite ? '取消收藏' : '收藏'} onClick={() => void toggleFavorite()}>
               <Heart className={cx('size-4', live.favorite && 'fill-current text-danger')} />
             </IconButton>
-            <IconButton label="下载" onClick={() => downloadUrl(live.url, fileName(live))}>
+            <IconButton label="下载" onClick={() => downloadUrl(`${live.url}?download=1`, live.filename ?? fileName(live))}>
               <Download className="size-4" />
             </IconButton>
+            {video && (
+              <IconButton label="把当前画面存为图片" onClick={() => void grabFrame()}>
+                <Scissors className="size-4" />
+              </IconButton>
+            )}
             {prompt && (
               <IconButton label="保存提示词" onClick={() => void derive.savePrompt(prompt, video ? 'video' : 'image')}>
                 <Save className="size-4" />
@@ -336,7 +361,7 @@ export function AssetViewer({
               <Columns2 className={cx('size-4', compare.ids.includes(live.id) && 'text-accent')} />
             </IconButton>
             <span className="flex-1" />
-            <IconButton label="删除" onClick={() => void remove()}>
+            <IconButton label="移入回收站" onClick={() => void remove()}>
               <Trash2 className="size-4" />
             </IconButton>
           </div>

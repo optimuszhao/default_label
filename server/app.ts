@@ -12,6 +12,7 @@ import { config } from './config.ts';
 import { db, migration } from './db.ts';
 import { logger } from './log.ts';
 import { seedCatalog } from './catalog.ts';
+import { registerAllJobs } from './jobs/index.ts';
 import { importOperatorFromEnv, loadOperators } from './providers/index.ts';
 import { registerRoutes } from './routes/index.ts';
 
@@ -20,6 +21,7 @@ export async function buildApp() {
   loadOperators();
   promoteConfiguredAdmins();
   seedCatalog();
+  registerAllJobs();
   const app = Fastify({
     loggerInstance: logger as FastifyBaseLogger,
     bodyLimit: 8 * 1024 * 1024,

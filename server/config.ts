@@ -66,6 +66,12 @@ const schema = z
     sessionDays: intIn('SESSION_DAYS', 1, 3650, 30),
     cookieSecure: z.boolean(),
     maxUploadMb: intIn('MAX_UPLOAD_MB', 1, 2048, 20),
+    uploadMaxMb: intIn('UPLOAD_MAX_MB', 1, 20480, 2048),
+    trashDays: intIn('TRASH_DAYS', 1, 3650, 30),
+    ttsApiBase: httpUrl('TTS_API_BASE'),
+    ttsApiKey: z.string(),
+    ttsModel: z.string(),
+    ttsVoice: z.string(),
     logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'], {
       error: 'LOG_LEVEL 只能是 fatal / error / warn / info / debug / trace / silent',
     }),
@@ -137,6 +143,15 @@ const raw = {
   sessionDays: env.SESSION_DAYS,
   cookieSecure: env.COOKIE_SECURE === '1',
   maxUploadMb: env.MAX_UPLOAD_MB,
+  /** 资产库分片上传的单文件上限（MB），默认 2 GB */
+  uploadMaxMb: env.UPLOAD_MAX_MB,
+  /** 回收站保留天数，到期自动彻底删除 */
+  trashDays: env.TRASH_DAYS,
+  /** 配音（TTS）：任何 OpenAI 兼容的 /v1/audio/speech 接口；不配置时用模拟配音 */
+  ttsApiBase: blank(env.TTS_API_BASE) ?? '',
+  ttsApiKey: blank(env.TTS_API_KEY) ?? '',
+  ttsModel: blank(env.TTS_MODEL) ?? '',
+  ttsVoice: blank(env.TTS_VOICE) ?? '',
   logLevel: blank(env.LOG_LEVEL) ?? (env.NODE_ENV === 'test' ? 'warn' : 'info'),
   backupAt: env.BACKUP_AT === undefined ? '03:30' : env.BACKUP_AT.trim(),
   backupKeep: env.BACKUP_KEEP,
