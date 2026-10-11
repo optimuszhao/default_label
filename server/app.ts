@@ -13,6 +13,7 @@ import { db, migration } from './db.ts';
 import { logger } from './log.ts';
 import { seedCatalog } from './catalog.ts';
 import { registerAllJobs } from './jobs/index.ts';
+import { WORKFLOWS, validateWorkflow } from './workflows/defs.ts';
 import { importOperatorFromEnv, loadOperators } from './providers/index.ts';
 import { registerRoutes } from './routes/index.ts';
 
@@ -22,6 +23,9 @@ export async function buildApp() {
   promoteConfiguredAdmins();
   seedCatalog();
   registerAllJobs();
+  // 工作流定义有问题时直接拒绝启动（开发时就能发现）
+  const workflowErrors = WORKFLOWS.flatMap(validateWorkflow);
+  if (workflowErrors.length) throw new Error(`工作流定义有误：\n${workflowErrors.join('\n')}`);
   const app = Fastify({
     loggerInstance: logger as FastifyBaseLogger,
     bodyLimit: 8 * 1024 * 1024,

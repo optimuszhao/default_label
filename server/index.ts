@@ -10,6 +10,7 @@ import { startJobs } from './jobs/runner.ts';
 import { startLibraryBackfill } from './library/derive.ts';
 import { startBatchFollowUps } from './stories/batch.ts';
 import { startStoryMigration } from './stories/migrate.ts';
+import { startWorkflows } from './workflows/engine.ts';
 import { logger } from './log.ts';
 import { startScheduler } from './scheduler.ts';
 
@@ -19,6 +20,7 @@ await cleanTempDir();
 const stopScheduler = startScheduler();
 const stopJobs = startJobs();
 startBatchFollowUps();
+const stopWorkflows = startWorkflows();
 startLibraryBackfill();
 startStoryMigration();
 const stopBackups = startBackups();
@@ -38,6 +40,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, async () => {
     stopScheduler();
     stopJobs();
+    stopWorkflows();
     stopBackups();
     await app.close();
     fs.rmSync(heartbeat, { force: true });

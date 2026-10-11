@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { ArrowLeft, Archive, Cpu, Gauge, LayoutTemplate, ListChecks, ScrollText, Users } from 'lucide-react';
+import { ArrowLeft, Archive, Cpu, Gauge, LayoutTemplate, ListChecks, ScrollText, Users, Workflow } from 'lucide-react';
 import { useEffect } from 'react';
 import { useCatalog } from '../studio/create/catalog.ts';
 import { Logo } from '../../components/ui.tsx';
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/admin/tasks', label: '任务', icon: ListChecks },
   { to: '/admin/users', label: '用户', icon: Users },
   { to: '/admin/content', label: '内容', icon: LayoutTemplate },
+  { to: '/admin/workflows', label: '工作流', icon: Workflow },
   { to: '/admin/backups', label: '备份', icon: Archive },
   { to: '/admin/audit', label: '审计', icon: ScrollText },
 ];

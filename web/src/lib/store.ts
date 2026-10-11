@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { DEFAULT_CAPABILITIES, type Capabilities } from '../../../shared/operator.ts';
-import type { Asset, Job, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings } from '../../../shared/types.ts';
+import type { Asset, Job, ProviderHealth, ServerEvent, SiteInfo, Task, TaskType, User, UserSettings, WorkflowRun } from '../../../shared/types.ts';
 import { api, ApiError } from './api.ts';
 
 export interface ComposerDraft {
@@ -35,6 +35,9 @@ interface State {
   /** 被彻底删除的素材（各页面据此从列表里移除；进回收站的改 asset.deletedAt） */
   removedAssets: Set<string>;
   jobs: Record<string, Job>;
+  /** 工作流运行（侧栏"待你选择"角标、工作流页面实时更新） */
+  workflowRuns: Record<string, WorkflowRun>;
+  upsertRuns: (runs: WorkflowRun[]) => void;
   composerDraft: ComposerDraft | null;
   toasts: Toast[];
 
@@ -65,6 +68,13 @@ export const useStore = create<State>((set, get) => ({
   assets: {},
   removedAssets: new Set(),
   jobs: {},
+  workflowRuns: {},
+  upsertRuns: (runs) =>
+    set((state) => {
+      const next = { ...state.workflowRuns };
+      for (const run of runs) if (!next[run.id] || next[run.id].updatedAt <= run.updatedAt) next[run.id] = run;
+      return { workflowRuns: next };
+    }),
   composerDraft: null,
   toasts: [],
 
@@ -106,7 +116,8 @@ export const useStore = create<State>((set, get) => ({
       case 'task': {
         const prev = state.tasks[event.task.id];
         state.upsertTasks([event.task]);
-        if (prev && prev.status !== event.task.status) {
+        // 工作流里的任务由运行视图统一提醒，不逐条弹
+        if (prev && prev.status !== event.task.status && event.task.origin?.kind !== 'workflow') {
           if (event.task.status === 'succeeded') state.toast(`「${event.task.title}」生成完成`, 'success');
           if (event.task.status === 'failed') state.toast(`「${event.task.title}」生成失败`, 'error');
         }
@@ -135,6 +146,16 @@ export const useStore = create<State>((set, get) => ({
       case 'job':
         set((current) => ({ jobs: { ...current.jobs, [event.job.id]: event.job } }));
         break;
+      case 'workflow-run': {
+        const prev = state.workflowRuns[event.run.id];
+        state.upsertRuns([event.run]);
+        if (prev && prev.status !== event.run.status) {
+          if (event.run.status === 'waiting') state.toast(`「${event.run.title}」等你挑选`, 'info');
+          if (event.run.status === 'succeeded') state.toast(`工作流「${event.run.title}」完成`, 'success');
+          if (event.run.status === 'failed') state.toast(`工作流「${event.run.title}」失败`, 'error');
+        }
+        break;
+      }
       case 'story-rev':
         // 故事编辑器自己监听（只在打开那篇故事时关心）
         window.dispatchEvent(new CustomEvent('weave:story-rev', { detail: event }));

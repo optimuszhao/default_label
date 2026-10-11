@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
-import { BookOpenText, Images, Lightbulb, ListOrdered, Settings, ShieldCheck, Sparkles } from 'lucide-react';
+import { BookOpenText, Images, Lightbulb, ListOrdered, Settings, ShieldCheck, Sparkles, Workflow } from 'lucide-react';
 import { HealthPills, Logo } from '../../components/ui.tsx';
 import { api } from '../../lib/api.ts';
 import { useStore } from '../../lib/store.ts';
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/studio/create', label: '创作', icon: Sparkles },
   { to: '/studio/inspire', label: '灵感', icon: Lightbulb },
   { to: '/studio/stories', label: '故事', icon: BookOpenText },
+  { to: '/studio/workflows', label: '工作流', icon: Workflow },
   { to: '/studio/queue', label: '队列', icon: ListOrdered },
   { to: '/studio/assets', label: '资产', icon: Images },
   { to: '/studio/settings', label: '设置', icon: Settings },
@@ -24,12 +25,30 @@ function useQueueBadge(): number {
   );
 }
 
+/** 等你挑选的工作流运行数 */
+function useWaitingBadge(): number {
+  const runs = useStore((s) => s.workflowRuns);
+  return useMemo(() => Object.values(runs).filter((run) => run.status === 'waiting').length, [runs]);
+}
+
+function Badge({ item, active, waiting, className }: { item: string; active: number; waiting: number; className: string }) {
+  const count = item.endsWith('queue') ? active : item.endsWith('workflows') ? waiting : 0;
+  if (!count) return null;
+  return (
+    <span className={cx(item.endsWith('workflows') ? 'bg-warn text-ink' : 'bg-brand text-white', 'rounded-full px-1.5 text-[10px] leading-4 font-semibold', className)} title={item.endsWith('workflows') ? '待你选择' : undefined}>
+      {count}
+    </span>
+  );
+}
+
 export default function StudioLayout() {
   const user = useStore((s) => s.user);
   const upsertTasks = useStore((s) => s.upsertTasks);
   const setHealth = useStore((s) => s.setHealth);
   const setCapabilities = useStore((s) => s.setCapabilities);
   const active = useQueueBadge();
+  const waiting = useWaitingBadge();
+  const upsertRuns = useStore((s) => s.upsertRuns);
 
   // 进入工作台时拉取最近任务和服务状态，之后靠 SSE 增量更新
   useEffect(() => {
@@ -37,7 +56,8 @@ export default function StudioLayout() {
     void api.health().then(setHealth).catch(() => undefined);
     void api.capabilities().then(setCapabilities).catch(() => undefined);
     void useCatalog.getState().load();
-  }, [upsertTasks, setHealth, setCapabilities]);
+    void api.workflowRuns(true).then(upsertRuns).catch(() => undefined);
+  }, [upsertTasks, setHealth, setCapabilities, upsertRuns]);
 
   return (
     <div className="min-h-dvh md:pl-[76px] lg:pl-56">
@@ -66,11 +86,7 @@ export default function StudioLayout() {
             >
               <item.icon className="size-[18px] shrink-0" />
               <span className="hidden lg:inline">{item.label}</span>
-              {item.to.endsWith('queue') && active > 0 && (
-                <span className="bg-brand ml-auto rounded-full px-1.5 text-[10px] leading-4 font-semibold text-white max-lg:absolute max-lg:top-1.5 max-lg:right-2">
-                  {active}
-                </span>
-              )}
+              <Badge item={item.to} active={active} waiting={waiting} className="ml-auto max-lg:absolute max-lg:top-1.5 max-lg:right-2" />
             </NavLink>
           ))}
           {user?.isAdmin && (
@@ -111,7 +127,7 @@ export default function StudioLayout() {
 
       {/* 移动端底部导航 */}
       <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-30 border-x-0 border-b-0 md:hidden">
-        <div className="grid h-16 grid-cols-6">
+        <div className="grid h-16 grid-cols-7">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
@@ -127,11 +143,7 @@ export default function StudioLayout() {
                 <>
                   <item.icon className={cx('size-5 transition-transform duration-300', isActive && 'scale-110')} />
                   {item.label}
-                  {item.to.endsWith('queue') && active > 0 && (
-                    <span className="bg-brand absolute top-1.5 left-1/2 ml-2 rounded-full px-1.5 text-[10px] leading-4 font-semibold text-white">
-                      {active}
-                    </span>
-                  )}
+                  <Badge item={item.to} active={active} waiting={waiting} className="absolute top-1.5 left-1/2 ml-2" />
                 </>
               )}
             </NavLink>

@@ -244,6 +244,7 @@ test('每个页面都能打开，没有控制台报错，并留存截图', async
     ['inspire', '/studio/inspire'],
     ['stories', '/studio/stories'],
     ['story-editor', `/studio/stories/${story.id}`],
+    ['workflows', '/studio/workflows'],
     ['queue', '/studio/queue'],
     ['assets', '/studio/assets'],
     ['settings', '/studio/settings'],
@@ -256,6 +257,7 @@ test('每个页面都能打开，没有控制台报错，并留存截图', async
     ['admin-tasks', '/admin/tasks'],
     ['admin-users', '/admin/users'],
     ['admin-content', '/admin/content'],
+    ['admin-workflows', '/admin/workflows'],
     ['admin-backups', '/admin/backups'],
     ['admin-audit', '/admin/audit'],
   ];

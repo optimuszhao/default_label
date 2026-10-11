@@ -11,11 +11,13 @@ import { seriesRoutes } from './series.ts';
 import { storyRoutes } from './stories.ts';
 import { publicSystemRoutes, systemRoutes } from './system.ts';
 import { taskRoutes } from './tasks.ts';
+import { adminWorkflowRoutes, workflowRoutes } from './workflows.ts';
 
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authRoutes);
   await app.register(publicSystemRoutes);
   await app.register(adminRoutes);
+  await app.register(adminWorkflowRoutes);
   await app.register(async (api) => {
     api.addHook('preHandler', requireUser);
     await api.register(systemRoutes);
@@ -24,6 +26,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     await api.register(libraryRoutes);
     await api.register(storyRoutes);
     await api.register(seriesRoutes);
+    await api.register(workflowRoutes);
     await api.register(assistRoutes);
     await api.register(catalogRoutes);
   });

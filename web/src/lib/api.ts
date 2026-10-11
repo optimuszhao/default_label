@@ -6,6 +6,7 @@ import type {
   AssetUsage,
   AssistKind,
   Job,
+  WorkflowRun,
   SavedSearch,
   StorageUsage,
   ProviderHealth,
@@ -82,6 +83,29 @@ export interface NewTask {
   link?: TaskLink;
   priority?: number;
   runNow?: boolean;
+}
+
+export interface WorkflowInputInfo {
+  key: string;
+  label: string;
+  type: 'text' | 'select' | 'image' | 'lines' | 'preset' | 'character';
+  required?: boolean;
+  default?: unknown;
+  options?: (string | number)[];
+  multiline?: boolean;
+  min?: number;
+  max?: number;
+  placeholder?: string;
+  hint?: string;
+}
+
+export interface WorkflowInfo {
+  id: string;
+  title: string;
+  description: string;
+  estimate: string;
+  inputs: WorkflowInputInfo[];
+  steps: { id: string; kind: string; label: string }[];
 }
 
 export interface SeriesSettings {
@@ -261,6 +285,17 @@ export const api = {
   storageUsage: () => request<StorageUsage>('GET', '/api/storage/usage'),
   duplicates: () => request<{ sha256: string; keepId: string; assets: Asset[] }[]>('GET', '/api/assets/duplicates'),
   mergeDuplicates: (sha256?: string[]) => request<{ groups: number; removed: number }>('POST', '/api/assets/duplicates/merge', { sha256 }),
+  workflows: () => request<WorkflowInfo[]>('GET', '/api/workflows'),
+  workflowCharacters: () => request<{ value: string; label: string; name: string; appearance: string }[]>('GET', '/api/workflows/characters'),
+  startWorkflow: (id: string, inputs: Record<string, unknown>, unattended: boolean) => request<WorkflowRun>('POST', `/api/workflows/${id}/runs`, { inputs, unattended }),
+  workflowRuns: (active = false) => request<WorkflowRun[]>('GET', `/api/workflow-runs${active ? '?status=active' : ''}`),
+  workflowRun: (id: string) => request<WorkflowRun>('GET', `/api/workflow-runs/${id}`),
+  workflowAction: (id: string, action: 'cancel' | 'pause' | 'resume') => request<WorkflowRun>('POST', `/api/workflow-runs/${id}/${action}`),
+  workflowStep: (id: string, stepId: string, action: 'select' | 'retry' | 'skip', assetIds?: string[]) =>
+    request<WorkflowRun>('POST', `/api/workflow-runs/${id}/steps/${stepId}/${action}`, assetIds ? { assetIds } : {}),
+  deleteWorkflowRun: (id: string) => request('DELETE', `/api/workflow-runs/${id}`),
+  adminWorkflows: () => request<(WorkflowInfo & { enabled: boolean; sort: number; defaults: Record<string, unknown>; runs: number })[]>('GET', '/api/admin/workflows'),
+  patchAdminWorkflow: (id: string, patch: { enabled?: boolean; sort?: number; defaults?: Record<string, unknown> }) => request('PATCH', `/api/admin/workflows/${id}`, patch),
   job: (id: string) => request<Job>('GET', `/api/jobs/${id}`),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${id}/cancel`),
 

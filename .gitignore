@@ -1,7 +1,7 @@
 node_modules/
 dist/
-data/
-media/
+/data/
+/media/
 *.log
 .env
 .env.local

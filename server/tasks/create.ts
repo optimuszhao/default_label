@@ -202,3 +202,23 @@ export function createTasks(user: CreateUser, items: z.input<typeof taskSchema>[
   if (tasks.length) kickScheduler();
   return tasks;
 }
+
+/**
+ * 取消一个任务：生成中的先通知算子取消；排队、暂停、生成中都标记为已取消并推送。
+ * 已经结束的任务不动。返回是否真的取消了。
+ */
+export async function cancelTaskById(id: string): Promise<boolean> {
+  const row = db.prepare('SELECT status, provider_job_id, operator_id FROM tasks WHERE id = ?').get(id) as Row | undefined;
+  if (!row || !['queued', 'paused', 'running'].includes(String(row.status))) return false;
+  if (row.status === 'running' && row.provider_job_id) {
+    const { getAdapter } = await import('../providers/index.ts');
+    await getAdapter((row.operator_id as string | null) ?? null)
+      ?.cancel(String(row.provider_job_id))
+      .catch(() => undefined);
+  }
+  db.prepare("UPDATE tasks SET status = 'canceled', manual_kick = 0, provider_job_id = NULL, finished_at = ?, updated_at = ? WHERE id = ? AND status IN ('queued', 'paused', 'running')").run(now(), now(), id);
+  const { emitTask, notifyTaskSettled } = await import('../scheduler.ts');
+  emitTask(id);
+  notifyTaskSettled(id);
+  return true;
+}

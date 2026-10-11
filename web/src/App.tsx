@@ -16,6 +16,7 @@ const Stories = lazy(() => import('./pages/studio/Stories.tsx'));
 const StoryEditor = lazy(() => import('./pages/studio/StoryEditor.tsx'));
 const Series = lazy(() => import('./pages/studio/Series.tsx'));
 const Print = lazy(() => import('./pages/Print.tsx'));
+const Workflows = lazy(() => import('./pages/studio/Workflows.tsx'));
 const Queue = lazy(() => import('./pages/studio/Queue.tsx'));
 const Assets = lazy(() => import('./pages/studio/Assets.tsx'));
 const Settings = lazy(() => import('./pages/studio/Settings.tsx'));
@@ -28,6 +29,7 @@ const AdminTasks = lazy(() => import('./pages/admin/Tasks.tsx'));
 const AdminUsers = lazy(() => import('./pages/admin/Users.tsx'));
 const AdminBackups = lazy(() => import('./pages/admin/Backups.tsx'));
 const AdminAudit = lazy(() => import('./pages/admin/Audit.tsx'));
+const AdminWorkflows = lazy(() => import('./pages/admin/Workflows.tsx'));
 const AdminContent = lazy(() => import('./pages/admin/Content.tsx'));
 
 function FullscreenLoader() {
@@ -96,6 +98,7 @@ export default function App() {
             <Route path="stories" element={<Stories />} />
             <Route path="stories/:id" element={<StoryEditor />} />
             <Route path="series/:id" element={<Series />} />
+            <Route path="workflows" element={<Workflows />} />
             <Route path="queue" element={<Queue />} />
             <Route path="assets" element={<Assets />} />
             <Route path="settings" element={<Settings />} />
@@ -114,6 +117,7 @@ export default function App() {
             <Route path="tasks" element={<AdminTasks />} />
             <Route path="users" element={<AdminUsers />} />
             <Route path="content" element={<AdminContent />} />
+            <Route path="workflows" element={<AdminWorkflows />} />
             <Route path="backups" element={<AdminBackups />} />
             <Route path="audit" element={<AdminAudit />} />
           </Route>

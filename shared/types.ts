@@ -159,6 +159,8 @@ export interface Task {
   outputAssetIds: string[];
   /** 创作台 2.0 的配方（模板、变量、预设、用户原文），用于“改参数重跑” */
   recipe: import('./presets.ts').Recipe | null;
+  /** 由故事批量或工作流创建时记录来源 */
+  origin: { kind: 'batch' | 'workflow'; id: string; step?: string } | null;
   createdAt: number;
   updatedAt: number;
   startedAt: number | null;
@@ -261,6 +263,38 @@ export interface StorageUsage {
   trash: { count: number; bytes: number };
   duplicates: { groups: number; wasted: number };
   disk: { free: number; total: number } | null;
+}
+
+/** 工作流运行（M8a） */
+export interface WorkflowRun {
+  id: string;
+  workflowId: string;
+  title: string;
+  /** running 进行中 / waiting 等你选择 / paused 已暂停 / succeeded / failed / canceled */
+  status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'canceled';
+  inputs: Record<string, unknown>;
+  unattended: boolean;
+  taskCount: number;
+  error: string | null;
+  steps: {
+    id: string;
+    kind: 'generate' | 'select' | 'llm' | 'local';
+    label: string;
+    status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'skipped' | 'canceled';
+    assets: string[];
+    taskIds: string[];
+    note: string | null;
+    error: string | null;
+    from?: string;
+    min?: number;
+    max?: number;
+    hint?: string | null;
+  }[];
+  /** 最终产物 */
+  outputs: string[];
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
 }
 
 /** 后台作业（缩略图、迁移、成片渲染……） */
@@ -500,5 +534,6 @@ export type ServerEvent =
   /** 彻底删除 */
   | { type: 'assets-removed'; ids: string[] }
   | { type: 'job'; job: Job }
+  | { type: 'workflow-run'; run: WorkflowRun }
   /** 故事被修改（clientId 是发起修改的那个编辑器，用来忽略自己的回声） */
   | { type: 'story-rev'; storyId: string; rev: number; clientId: string | null };

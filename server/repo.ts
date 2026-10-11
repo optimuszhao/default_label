@@ -114,6 +114,7 @@ export function toTask(row: Row): Task {
     manualKick: Number(row.manual_kick) === 1,
     outputAssetIds: parseJson<string[]>(row.output_asset_ids, []),
     recipe: parseJson<Task['recipe']>(row.recipe, null),
+    origin: parseJson<Task['origin']>(row.origin, null),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
     startedAt: row.started_at == null ? null : Number(row.started_at),

@@ -3,10 +3,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Task } from '../../shared/types.ts';
 import { db, now, type Row } from '../db.ts';
-import { getAdapter } from '../providers/index.ts';
 import { getTask, getTaskOwner, toTask } from '../repo.ts';
-import { emitTask, kickScheduler, notifyTaskSettled } from '../scheduler.ts';
-import { createTasks, insertTask, taskSchema, type TaskInput } from '../tasks/create.ts';
+import { kickScheduler, notifyTaskSettled } from '../scheduler.ts';
+import { cancelTaskById, createTasks, insertTask, taskSchema, type TaskInput } from '../tasks/create.ts';
 import { bad, parse, uid } from './common.ts';
 
 function ownedTask(request: FastifyRequest, reply: FastifyReply): Task | null {
@@ -100,17 +99,8 @@ export async function taskRoutes(api: FastifyInstance): Promise<void> {
   api.post('/api/tasks/:id/cancel', async (request, reply) => {
     const task = ownedTask(request, reply);
     if (!task) return;
-    if (!['queued', 'paused', 'running'].includes(task.status)) return task;
-    const row = db.prepare('SELECT provider_job_id, operator_id FROM tasks WHERE id = ?').get(task.id) as Row;
-    if (task.status === 'running' && row.provider_job_id) {
-      await getAdapter((row.operator_id as string | null) ?? null)
-        ?.cancel(String(row.provider_job_id))
-        .catch(() => undefined);
-    }
-    const canceled = setTask(task.id, { status: 'canceled', manual_kick: 0, provider_job_id: null, finished_at: now() });
-    emitTask(task.id);
-    notifyTaskSettled(canceled);
-    return canceled;
+    await cancelTaskById(task.id);
+    return getTask(task.id);
   });
 
   api.post('/api/tasks/:id/retry', async (request, reply) => {

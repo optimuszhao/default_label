@@ -9,7 +9,11 @@
 //   POST /__control   {...场景}        修改场景，见下方 Scenario
 //   POST /__reset                       恢复默认场景并清空任务和请求记录
 //   GET  /__requests                    已收到的生成请求（含解析后的参数），用于断言
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import zlib from 'node:zlib';
 
@@ -36,6 +40,8 @@ interface Scenario {
   videoSizeMb: number;
   /** 提交接口先收下任务，再拖这么久才返回（模拟提交超时但实际已收下） */
   submitDelayMs: number;
+  /** 视频产物用 ffmpeg 生成能解码的真实小视频（测截帧、拼接、成片时打开；需要本机有 ffmpeg） */
+  realMedia: boolean;
 }
 
 const DEFAULT: Scenario = {
@@ -51,7 +57,30 @@ const DEFAULT: Scenario = {
   resultBase: '',
   videoSizeMb: 1,
   submitDelayMs: 0,
+  realMedia: false,
 };
+
+const realVideos = new Map<string, Buffer>();
+
+/** 真实的小视频（testsrc 彩条 + 计时器），同一规格只生成一次；尺寸按提交的一半，避免太慢 */
+function realVideo(width: number, height: number, seconds: number, seed: number): Buffer {
+  const w = Math.max(64, Math.round(width / 4 / 2) * 2);
+  const h = Math.max(64, Math.round(height / 4 / 2) * 2);
+  const key = `${w}x${h}x${seconds}x${seed % 4}`;
+  const cached = realVideos.get(key);
+  if (cached) return cached;
+  const file = path.join(os.tmpdir(), `weave-fake-${process.pid}-${key}.mp4`);
+  execFileSync('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', `testsrc=size=${w}x${h}:rate=24:duration=${seconds}`,
+    '-vf', `hue=h=${(seed % 4) * 90}`,
+    '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-preset', 'ultrafast', file,
+  ]);
+  const data = fs.readFileSync(file);
+  fs.rmSync(file, { force: true });
+  realVideos.set(key, data);
+  return data;
+}
 
 interface FakeTask {
   id: string;
@@ -327,6 +356,11 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return void res.end(makePng(width, height));
     }
     const upscaled = filename.includes('upscale');
+    if (scenario.realMedia) {
+      const data = realVideo(width, height, Math.max(1, Math.min(10, Number(task.params.duration) || 2)), Number(task.params.seed) || 0);
+      res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': String(data.length) });
+      return void res.end(data);
+    }
     const header = makeMp4Header(upscaled ? width * 2 : width, upscaled ? height * 2 : height, Number(task.params.duration) || 5);
     const total = Math.max(header.length + 8, Math.round(scenario.videoSizeMb * 1024 * 1024));
     const mdatSize = total - header.length;
