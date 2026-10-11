@@ -128,7 +128,7 @@ function CharacterCard({ character, onPick }: { character: Character; onPick: ()
 }
 
 export function CharactersTab() {
-  const { storyId, data, update } = useStory();
+  const { storyId, data, update, flushNow } = useStory();
   const [loading, setLoading] = useState(false);
   const [picking, setPicking] = useState<string | null>(null);
 
@@ -139,6 +139,7 @@ export function CharactersTab() {
     }
     setLoading(true);
     try {
+      await flushNow?.();
       const result = await api.assist<{ characters: Omit<Character, 'id' | 'referenceAssetId'>[] }>('characters', {
         storyId,
         logline: data.logline,

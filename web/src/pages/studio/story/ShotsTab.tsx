@@ -210,7 +210,7 @@ const ShotCard = memo(function ShotCard({
 });
 
 export function ShotsTab() {
-  const { storyId, data, update, sceneId } = useStory();
+  const { storyId, data, update, sceneId, flushNow } = useStory();
   const generator = useShotGenerator();
   const [designing, setDesigning] = useState(false);
   const [viewing, setViewing] = useState<Asset | null>(null);
@@ -222,6 +222,7 @@ export function ShotsTab() {
     if (scene.shots.length && !(await confirmDialog({ title: '用 AI 设计的分镜替换本场现有镜头？', message: '当前内容会先存进历史版本。' }))) return;
     setDesigning(true);
     try {
+      await flushNow?.();
       const result = await api.assist<{
         shots: { shotSize: string; cameraMove: string; description: string; duration: number; dialogueIndexes: number[]; characterNames: string[] }[];
       }>('shots', {

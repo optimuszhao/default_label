@@ -29,6 +29,7 @@ ARG WITH_FFMPEG=1
 ARG APT_MIRROR=
 RUN if [ "$WITH_FFMPEG" = "1" ]; then \
       if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; fi && \
+      printf 'Acquire::Retries "8";\nAcquire::http::Pipeline-Depth "0";\n' > /etc/apt/apt.conf.d/80-retries && \
       apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; \
     fi
 

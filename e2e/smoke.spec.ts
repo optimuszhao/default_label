@@ -157,21 +157,32 @@ test('PWA：清单、图标和 Service Worker 都能取到，SW 不缓存', asyn
   await expect(page.locator('link[rel=manifest]')).toHaveAttribute('href', '/manifest.webmanifest');
 });
 
-test('两个标签页同时编辑故事：后保存的一方看到冲突提示', async ({ page, context }) => {
+test('STY-05 两个标签页同时编辑不同字段：互相实时同步，两边的修改都保留；可以撤销', async ({ page, context }) => {
   await register(page);
-  const story = await (await page.request.post('/api/stories', { data: { title: '冲突', logline: '' } })).json();
+  const story = await (await page.request.post('/api/stories', { data: { title: '同步', logline: '' } })).json();
   await page.goto(`/studio/stories/${story.id}?tab=setup`);
   const second = await context.newPage();
   await second.goto(`/studio/stories/${story.id}?tab=setup`);
 
-  const title = page.getByRole('textbox', { name: '故事名称' });
-  await title.fill('第一个标签页');
+  await page.getByRole('textbox', { name: '故事名称' }).fill('第一个标签页改的标题');
   await expect(page.getByRole('status', { name: '已保存' })).toBeVisible();
+  await expect(second.getByRole('textbox', { name: '故事名称' })).toHaveValue('第一个标签页改的标题');
 
-  await second.getByRole('textbox', { name: '故事名称' }).fill('第二个标签页');
-  await expect(second.getByText('这个故事已在其他设备或标签页更新')).toBeVisible();
-  await second.getByRole('button', { name: '载入最新版本' }).click();
-  await expect(second.getByRole('textbox', { name: '故事名称' })).toHaveValue('第一个标签页');
+  const tone = (p: typeof page) => p.getByPlaceholder('例如：温暖而带着忧伤 / 紧张压抑 / 轻松幽默');
+  await tone(second).fill('紧张压抑');
+  await expect(second.getByRole('status', { name: '已保存' })).toBeVisible();
+  await expect(tone(page)).toHaveValue('紧张压抑');
+  await expect(page.getByRole('textbox', { name: '故事名称' })).toHaveValue('第一个标签页改的标题');
+
+  // 撤销：第二个标签页撤回自己的修改
+  await second.getByRole('heading').first().click();
+  await second.getByRole('button', { name: /撤销/ }).click();
+  await expect(tone(second)).toHaveValue('');
+  await expect(second.getByRole('status', { name: '已保存' })).toBeVisible();
+  await expect(tone(page)).toHaveValue('');
+  const saved = await (await page.request.get(`/api/stories/${story.id}`)).json();
+  expect(saved.title).toBe('第一个标签页改的标题');
+  expect(saved.data.tone).toBe('');
 });
 
 test('断网时的修改：关掉页面再打开，会从本地重放并保存', async ({ page, context }) => {
@@ -194,6 +205,24 @@ test('断网时的修改：关掉页面再打开，会从本地重放并保存',
   await expect(reopened.getByRole('status', { name: '已保存' })).toBeVisible();
   const saved = await (await reopened.request.get(`/api/stories/${story.id}`)).json();
   expect(saved.title).toBe('离线时改的标题');
+});
+
+test('STY-05 保存失败的修改留在本机队列：刷新后在界面上重放，恢复后自动提交', async ({ page }) => {
+  await register(page);
+  const story = await (await page.request.post('/api/stories', { data: { title: '队列', logline: '' } })).json();
+  await page.goto(`/studio/stories/${story.id}?tab=setup`);
+  await expect(page.getByRole('textbox', { name: '故事名称' })).toHaveValue('队列');
+  const block = (route: import('@playwright/test').Route) => route.abort();
+  await page.route('**/api/stories/*/ops', block);
+  await page.getByRole('textbox', { name: '故事名称' }).fill('没送出去的标题');
+  await expect(page.getByRole('status', { name: '保存失败' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('已恢复上次未保存的修改')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '故事名称' })).toHaveValue('没送出去的标题');
+  await page.unroute('**/api/stories/*/ops', block);
+  await expect(page.getByRole('status', { name: '已保存' })).toBeVisible({ timeout: 20_000 });
+  const saved = await (await page.request.get(`/api/stories/${story.id}`)).json();
+  expect(saved.title).toBe('没送出去的标题');
 });
 
 test('每个页面都能打开，没有控制台报错，并留存截图', async ({ page }, testInfo) => {

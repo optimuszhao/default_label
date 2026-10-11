@@ -15,28 +15,21 @@ before(async () => {
 after(async () => h?.stop());
 
 describe('故事保存', () => {
-  test('带 baseRev 保存：版本号递增，旧版本保存返回 409', async () => {
-    const story = await user.post('/api/stories', { title: '冲突测试', logline: '一句话' });
-    assert.equal(story.rev, 0);
-    const saved = await user.put(`/api/stories/${story.id}`, { title: '第一版', data: story.data, baseRev: 0 });
-    assert.equal(saved.rev, 1);
+  const setTitle = (id: string, title: string) => user.post(`/api/stories/${id}/ops`, { ops: [{ op: 'set', entity: 'story', id: 'story', patch: { title } }] });
 
-    // 另一个标签页还拿着 rev 0
+  test('增量保存：版本号递增；旧版前端的整篇保存提示刷新', async () => {
+    const story = await user.post('/api/stories', { title: '冲突测试', logline: '一句话' });
+    const saved = await setTitle(story.id, '第一版');
+    assert.equal(saved.rev, story.rev + 1);
+    assert.equal((await user.get(`/api/stories/${story.id}`)).title, '第一版');
     const stale = await user.raw('PUT', `/api/stories/${story.id}`, { title: '旧标签页', data: story.data, baseRev: 0 });
     assert.equal(stale.status, 409);
-    const body = await stale.json();
-    assert.equal(body.rev, 1);
-    assert.equal((await user.get(`/api/stories/${story.id}`)).title, '第一版');
-
-    // 不带 baseRev 的旧客户端仍可保存
-    const legacy = await user.put(`/api/stories/${story.id}`, { title: '旧客户端', data: story.data });
-    assert.equal(legacy.rev, 2);
   });
 
   test('每天第一次保存留一份历史版本，可以恢复，恢复前再存一份', async () => {
     const story = await user.post('/api/stories', { title: '原始标题', logline: '' });
-    await user.put(`/api/stories/${story.id}`, { title: '改过的标题', data: story.data, baseRev: 0 });
-    await user.put(`/api/stories/${story.id}`, { title: '再改一次', data: story.data, baseRev: 1 });
+    await setTitle(story.id, '改过的标题');
+    await setTitle(story.id, '再改一次');
     const snapshots = await user.get<any[]>(`/api/stories/${story.id}/snapshots`);
     assert.equal(snapshots.length, 1, '同一天只留一份');
     assert.equal(snapshots[0].reason, 'daily');
@@ -44,9 +37,8 @@ describe('故事保存', () => {
 
     const restored = await user.post(`/api/stories/${story.id}/snapshots/${snapshots[0].id}/restore`);
     assert.equal(restored.title, '原始标题');
-    assert.equal(restored.rev, 3);
     const after = await user.get<any[]>(`/api/stories/${story.id}/snapshots`);
-    assert.equal(after[0].reason, 'restore');
+    assert.equal(after[0].reason, 'before_restore');
     assert.equal(after[0].title, '再改一次');
   });
 
@@ -62,7 +54,7 @@ describe('故事保存', () => {
     const story = await user.post('/api/stories', { title: '私有', logline: '' });
     const other = await h.user();
     assert.equal((await other.raw('GET', `/api/stories/${story.id}/snapshots`)).status, 404);
-    assert.equal((await other.raw('PUT', `/api/stories/${story.id}`, { title: 'x', data: story.data, baseRev: 0 })).status, 404);
+    assert.equal((await other.raw('POST', `/api/stories/${story.id}/ops`, { ops: [] })).status, 404);
   });
 });
 

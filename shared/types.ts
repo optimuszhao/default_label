@@ -304,6 +304,19 @@ export interface ProviderHealth {
 
 // ---------------- 故事工坊 ----------------
 
+/** 设定上挂的参考图：primary 主参考图；front / side / full 三视图；expression 表情；outfit:<id> 服装 */
+export interface ElementRef {
+  assetId: string;
+  role: string;
+}
+
+export interface Outfit {
+  id: string;
+  name: string;
+  /** 会拼进提示词的服装描述 */
+  snippet: string;
+}
+
 export interface Character {
   id: string;
   name: string;
@@ -311,6 +324,33 @@ export interface Character {
   appearance: string; // 外貌描述，会拼进分镜提示词保持一致性
   personality: string;
   referenceAssetId: string | null;
+  /** 别名：描述里写别名也能识别成这个角色 */
+  aliases?: string[];
+  /** 固定种子：定妆照和镜头都用它，保证脸型一致 */
+  seed?: number | null;
+  /** 这个角色专用的反向提示词片段 */
+  negative?: string;
+  outfits?: Outfit[];
+  /** 更多参考图（主参考图之外） */
+  refs?: ElementRef[];
+  /** 在系列的所有集里共享 */
+  seriesShared?: boolean;
+}
+
+/** 角色之外的设定：地点、道具、画风 */
+export interface StoryElement {
+  id: string;
+  kind: 'location' | 'prop' | 'style';
+  name: string;
+  /** 会拼进提示词的描述 */
+  snippet: string;
+  negative?: string;
+  aliases?: string[];
+  seed?: number | null;
+  refs?: ElementRef[];
+  /** 地点的时段 / 天气变体等 */
+  variants?: { id: string; name: string; snippet: string }[];
+  seriesShared?: boolean;
 }
 
 export interface DialogueLine {
@@ -318,6 +358,10 @@ export interface DialogueLine {
   characterId: string | null; // null 表示旁白
   text: string;
   emotion: string;
+  /** dialogue 台词（默认）/ narration 旁白 / caption 字幕卡 */
+  kind?: 'dialogue' | 'narration' | 'caption';
+  /** 配音素材（M8b） */
+  voiceAssetId?: string | null;
 }
 
 export interface Shot {
@@ -330,6 +374,27 @@ export interface Shot {
   characterIds: string[];
   keyframeAssetId: string | null; // 用户选定的关键帧（为空则用最新一张）
   videoAssetId: string | null;
+  /** 镜头编号（例如 1-2-3），留空时按顺序自动编号 */
+  code?: string;
+  /** 出镜的地点、道具、画风设定（角色在 characterIds 里） */
+  elementIds?: string[];
+  /** 定稿：批量操作不会改动 */
+  locked?: boolean;
+  /** redo：标记为待返工 */
+  review?: 'redo' | null;
+  /** 锁定的种子 */
+  seed?: number | null;
+  /** 追加在自动提示词后面的内容 */
+  extraPrompt?: string;
+  negative?: string;
+  /** 完全手写的提示词（填了就不再自动拼） */
+  promptOverride?: string;
+  /** 视频首帧来源：选定的关键帧（默认）/ 接续上一镜尾帧 / 指定素材 */
+  firstFrame?: { mode: 'keyframe' | 'prev_last' | 'asset'; assetId?: string | null };
+  /** 成片时的裁剪点（秒） */
+  trimIn?: number;
+  trimOut?: number;
+  transition?: 'cut' | 'fade';
 }
 
 export interface Scene {
@@ -346,6 +411,8 @@ export interface Chapter {
   id: string;
   title: string;
   summary: string;
+  /** 前情提要（AI 生成，给后面的章节当上下文） */
+  recap?: string;
   scenes: Scene[];
 }
 
@@ -358,14 +425,20 @@ export interface StoryData {
   outline: string; // 故事大纲（长文本）
   /** 关键帧的负向提示词（不填用默认值） */
   negativePrompt?: string;
+  /** 目标成片时长（秒），进度看板用 */
+  targetDuration?: number;
+  /** 默认种子 */
+  defaultSeed?: number | null;
   characters: Character[];
+  /** 地点、道具、画风设定 */
+  elements?: StoryElement[];
   chapters: Chapter[];
 }
 
 export interface StorySummary {
   id: string;
   title: string;
-  /** 版本号，保存时带上用于冲突检测 */
+  /** 版本号，每次保存 +1 */
   rev: number;
   logline: string;
   coverUrl: string | null;
@@ -376,14 +449,22 @@ export interface StorySummary {
 
 export interface Story extends StorySummary {
   data: StoryData;
+  /** 各个元素的排序键（id → 键），增量保存时计算新位置用 */
+  keys?: Record<string, string>;
+  /** 迁移失败的旧故事：只读打开 */
+  readOnly?: boolean;
 }
 
 export interface StorySnapshot {
   id: string;
   rev: number;
   title: string;
-  /** daily：每日自动；ai:<kind>：AI 改写前；restore：恢复前 */
+  /** auto 自动 / daily 每日 / manual 手动 / ai:<kind> AI 改写前 / before_batch 批量生成前 / before_restore 恢复前 / migration 升级前的原始内容 */
   reason: string;
+  label: string | null;
+  /** 永久保留（手动保存、升级前的原始内容） */
+  pinned: boolean;
+  stats: { chapters: number; scenes: number; shots: number; characters: number } | null;
   createdAt: number;
 }
 
@@ -412,4 +493,6 @@ export type ServerEvent =
   | { type: 'assets-trashed'; ids: string[]; at: number | null }
   /** 彻底删除 */
   | { type: 'assets-removed'; ids: string[] }
-  | { type: 'job'; job: Job };
+  | { type: 'job'; job: Job }
+  /** 故事被修改（clientId 是发起修改的那个编辑器，用来忽略自己的回声） */
+  | { type: 'story-rev'; storyId: string; rev: number; clientId: string | null };

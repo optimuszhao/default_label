@@ -8,6 +8,7 @@ import { config } from './config.ts';
 import { cleanTempDir } from './files.ts';
 import { startJobs } from './jobs/runner.ts';
 import { startLibraryBackfill } from './library/derive.ts';
+import { startStoryMigration } from './stories/migrate.ts';
 import { logger } from './log.ts';
 import { startScheduler } from './scheduler.ts';
 
@@ -17,6 +18,7 @@ await cleanTempDir();
 const stopScheduler = startScheduler();
 const stopJobs = startJobs();
 startLibraryBackfill();
+startStoryMigration();
 const stopBackups = startBackups();
 purgeExpiredSessions();
 setInterval(purgeExpiredSessions, 6 * 3600 * 1000).unref();

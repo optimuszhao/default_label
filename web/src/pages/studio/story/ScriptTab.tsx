@@ -16,7 +16,7 @@ interface AiChapter {
 }
 
 export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { storyId, data, update, setSceneId } = useStory();
+  const { storyId, data, update, setSceneId, flushNow } = useStory();
   const [chapters, setChapters] = useState(3);
   const [scenes, setScenes] = useState(3);
   const [loading, setLoading] = useState(false);
@@ -24,6 +24,7 @@ export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => v
   async function run() {
     setLoading(true);
     try {
+      await flushNow?.();
       const result = await api.assist<{ chapters: AiChapter[] }>('chapters', {
         storyId,
         outline: data.outline,
@@ -69,7 +70,7 @@ export function SplitDialog({ open, onClose }: { open: boolean; onClose: () => v
 }
 
 function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
-  const { storyId, data, update, sceneId } = useStory();
+  const { storyId, data, update, sceneId, flushNow } = useStory();
   const found = findScene(data, sceneId);
   const [writing, setWriting] = useState(false);
   if (!found) {
@@ -84,6 +85,7 @@ function SceneEditor({ onGoShots }: { onGoShots: () => void }) {
     if (scene.dialogue.length && !(await confirmDialog({ title: '用 AI 生成的台词替换本场现有台词？', message: '当前内容会先存进历史版本。' }))) return;
     setWriting(true);
     try {
+      await flushNow?.();
       const result = await api.assist<{ dialogue: { character: string; text: string; emotion: string }[] }>('dialogue', {
         storyId,
         outline: data.outline.slice(0, 3000),

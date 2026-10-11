@@ -268,9 +268,9 @@ describe('M6 资产库 2.0', () => {
     const [keep, dup] = await generate(st, '重复', 2);
     await until(async () => (await st.get(`/api/assets/${dup}/detail`)).sha256, 10_000, '哈希');
     const story = await st.post('/api/stories', { title: '引用测试', logline: '' });
-    const full = await st.get(`/api/stories/${story.id}`);
-    const data = { ...full.data, characters: [{ id: 'c_1', name: '甲', role: '主角', appearance: '', personality: '', referenceAssetId: dup }] };
-    await st.put(`/api/stories/${story.id}`, { title: full.title, data, baseRev: full.rev });
+    await st.post(`/api/stories/${story.id}/ops`, {
+      ops: [{ op: 'create', entity: 'character', id: 'c_1', sortKey: 'i', value: { name: '甲', role: '主角', referenceAssetId: dup } }],
+    });
     const db = openDb();
     const sha = (db.prepare('SELECT sha256 FROM assets WHERE id = ?').get(keep) as { sha256: string }).sha256;
     db.prepare('UPDATE assets SET sha256 = ?, rating = 5 WHERE id = ?').run(sha, dup);
@@ -310,11 +310,8 @@ describe('M6 资产库 2.0', () => {
     assert.equal(up.parents[0].id, video.asset.id);
     // 使用情况：被故事角色引用
     const story = await fr.post('/api/stories', { title: '用到截帧', logline: '' });
-    const full = await fr.get(`/api/stories/${story.id}`);
-    await fr.put(`/api/stories/${story.id}`, {
-      title: full.title,
-      data: { ...full.data, characters: [{ id: 'c_x', name: '乙', role: '主角', appearance: '', personality: '', referenceAssetId: frame.id }] },
-      baseRev: full.rev,
+    await fr.post(`/api/stories/${story.id}/ops`, {
+      ops: [{ op: 'create', entity: 'character', id: 'c_x', sortKey: 'i', value: { name: '乙', role: '主角', referenceAssetId: frame.id } }],
     });
     const usage = await fr.get(`/api/assets/${frame.id}/usage`);
     assert.equal(usage.stories.length, 1);

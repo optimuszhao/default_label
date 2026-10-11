@@ -135,6 +135,10 @@ export const useStore = create<State>((set, get) => ({
       case 'job':
         set((current) => ({ jobs: { ...current.jobs, [event.job.id]: event.job } }));
         break;
+      case 'story-rev':
+        // 故事编辑器自己监听（只在打开那篇故事时关心）
+        window.dispatchEvent(new CustomEvent('weave:story-rev', { detail: event }));
+        break;
       case 'health':
         state.setHealth(event.health);
         break;

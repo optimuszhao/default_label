@@ -14,6 +14,8 @@ export interface StoryContextValue {
   media: Map<string, ShotMedia>;
   sceneId: string | null;
   setSceneId: (id: string | null) => void;
+  /** 立即提交未保存的修改（AI 改写、批量生成之前调用，服务端的快照才包含最新内容） */
+  flushNow?: () => Promise<boolean>;
 }
 
 export const StoryContext = createContext<StoryContextValue | null>(null);

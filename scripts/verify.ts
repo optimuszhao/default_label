@@ -12,7 +12,8 @@ const steps: [string, string][] = [
     : ([
         ['构建前端', 'npm run -s build'],
         ['浏览器冒烟测试', 'npx playwright test'],
-        ['依赖漏洞（生产依赖，高危）', 'npm audit --omit=dev --audit-level=high'],
+        // 国内镜像源（npmmirror 等）不支持漏洞查询接口，固定用官方源
+        ['依赖漏洞（生产依赖，高危）', 'npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org'],
       ] as [string, string][])),
 ];
 

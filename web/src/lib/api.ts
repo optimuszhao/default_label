@@ -25,6 +25,7 @@ import type {
 } from '../../../shared/types.ts';
 
 import type { Capabilities } from '../../../shared/operator.ts';
+import type { StoryOp } from '../../../shared/story-ops.ts';
 import type { Preset, PromptTemplate, Recipe, UserPrompt } from '../../../shared/presets.ts';
 
 export class ApiError extends Error {
@@ -234,9 +235,16 @@ export const api = {
   stories: () => request<StorySummary[]>('GET', '/api/stories'),
   createStory: (title: string, logline: string) => request<Story>('POST', '/api/stories', { title, logline }),
   story: (id: string) => request<Story>('GET', `/api/stories/${id}`),
-  saveStory: (id: string, title: string, data: StoryData, baseRev?: number) =>
-    request<{ ok: true; rev: number; updatedAt: number }>('PUT', `/api/stories/${id}`, { title, data, baseRev }),
+  storyOps: (id: string, body: { baseRev: number; clientId: string; batchId: string; ops: StoryOp[] }) =>
+    request<{ rev: number; ignored: { index: number; reason: string }[]; duplicate?: boolean }>('POST', `/api/stories/${id}/ops`, body),
+  storyChanges: (id: string, since: number) =>
+    request<{ rev: number; reset?: boolean; changes: { rev: number; clientId: string | null; ops: StoryOp[] }[] }>('GET', `/api/stories/${id}/changes?since=${since}`),
+  storyMedia: (id: string) => request<Asset[]>('GET', `/api/stories/${id}/media`),
+  patchStory: (id: string, patch: { status?: 'active' | 'done' | 'archived'; lastPosition?: { tab: string; sceneId?: string | null }; coverAssetId?: string | null }) =>
+    request<StorySummary>('PATCH', `/api/stories/${id}`, patch),
   storySnapshots: (id: string) => request<StorySnapshot[]>('GET', `/api/stories/${id}/snapshots`),
+  storySnapshot: (id: string, snapshotId: string) => request<StorySnapshot & { data: StoryData }>('GET', `/api/stories/${id}/snapshots/${snapshotId}`),
+  saveSnapshot: (id: string, label: string) => request<StorySnapshot>('POST', `/api/stories/${id}/snapshots`, { label }),
   restoreSnapshot: (id: string, snapshotId: string) => request<Story>('POST', `/api/stories/${id}/snapshots/${snapshotId}/restore`),
   deleteStory: (id: string) => request('DELETE', `/api/stories/${id}`),
 

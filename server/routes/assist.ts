@@ -47,7 +47,7 @@ export async function assistRoutes(api: FastifyInstance): Promise<void> {
     // 故事里的 AI 改写会替换已有内容：先留一份历史版本
     if (typeof storyId === 'string' && ['outline', 'characters', 'chapters', 'dialogue', 'shots'].includes(kind)) {
       const story = ownedStory(request, storyId);
-      if (story) snapshotStory(story, `ai:${kind}`);
+      if (story) snapshotStory(String(story.id), `ai:${kind}`);
     }
 
     const key = CACHEABLE.has(kind) ? createHash('sha256').update(`${kind}:${JSON.stringify(input)}`).digest('hex') : null;
