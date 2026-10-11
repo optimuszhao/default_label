@@ -24,7 +24,7 @@ export const STORY_ID = 'story';
 export const STORY_FIELDS = ['title', 'logline', 'genre', 'tone', 'visualStyle', 'aspectRatio', 'outline', 'negativePrompt', 'targetDuration', 'defaultSeed'] as const;
 
 export const ENTITY_FIELDS = {
-  character: ['name', 'role', 'appearance', 'personality', 'referenceAssetId', 'aliases', 'seed', 'negative', 'outfits', 'refs', 'seriesShared'],
+  character: ['name', 'role', 'appearance', 'personality', 'referenceAssetId', 'aliases', 'seed', 'negative', 'outfits', 'refs', 'voice', 'seriesShared'],
   element: ['kind', 'name', 'snippet', 'negative', 'aliases', 'seed', 'refs', 'variants', 'seriesShared'],
   chapter: ['title', 'summary', 'recap'],
   scene: ['title', 'location', 'locationId', 'time', 'summary'],

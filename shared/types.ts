@@ -180,7 +180,8 @@ export interface Asset {
   taskId: string | null;
   storyId: string | null;
   shotId: string | null;
-  purpose: 'keyframe' | 'video' | null;
+  /** keyframe 关键帧 / video 镜头视频 / film 成片 / voice 配音 */
+  purpose: 'keyframe' | 'video' | 'film' | 'voice' | null;
   favorite: boolean;
   /** 视频时长（秒），从文件头读出 */
   duration: number | null;
@@ -367,6 +368,8 @@ export interface Character {
   outfits?: Outfit[];
   /** 更多参考图（主参考图之外） */
   refs?: ElementRef[];
+  /** 配音音色（TTS 的 voice 参数，不填用默认音色） */
+  voice?: string;
   /** 在系列的所有集里共享 */
   seriesShared?: boolean;
 }

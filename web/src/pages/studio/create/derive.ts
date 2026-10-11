@@ -116,6 +116,24 @@ export function useDerive() {
       goCreate();
     },
 
+    /** 续拍（CRT-06）：截这段视频的最后一帧做首帧，接着生成下一段；沿用原任务的比例、清晰度、时长和预设 */
+    continueShot: async (video: Asset, task?: Task | null) => {
+      try {
+        const frame = await api.frame(video.id, 'last');
+        useStore.getState().upsertAssets([frame]);
+        const base = task?.recipe ?? null;
+        setDraft({
+          mode: 'video',
+          recipe: { ...emptyRecipe('video'), ...(base ? { presets: base.presets, overrides: base.overrides } : {}), text: '', parentAssetId: frame.id },
+          firstFrameAssetId: frame.id,
+        });
+        goCreate();
+        toast('已截取最后一帧做首帧，写下一段的动作就能续拍', 'success');
+      } catch (error) {
+        reportError(error);
+      }
+    },
+
     savePrompt: async (text: string, mode: 'image' | 'video') => {
       try {
         const saved = await api.savePrompt(text.slice(0, 16), text, mode);

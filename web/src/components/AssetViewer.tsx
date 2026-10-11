@@ -317,6 +317,11 @@ export function AssetViewer({
               <Button size="sm" variant="secondary" icon={<SlidersHorizontal className="size-3.5" />} onClick={() => { derive.editRerun(task, live); onClose(); }}>
                 改参数重跑
               </Button>
+              {video && (
+                <Button size="sm" variant="secondary" icon={<Clapperboard className="size-3.5" />} className="col-span-2" onClick={() => void derive.continueShot(live, task).then(onClose)}>
+                  续拍下一段
+                </Button>
+              )}
               {!video && (
                 <>
                   <Button size="sm" variant="secondary" icon={<Shuffle className="size-3.5" />} onClick={() => void derive.variant(live, task)}>
@@ -331,6 +336,11 @@ export function AssetViewer({
                 </>
               )}
             </div>
+          )}
+          {live.source === 'upload' && video && (
+            <Button size="sm" variant="secondary" icon={<Clapperboard className="size-3.5" />} onClick={() => void derive.continueShot(live).then(onClose)}>
+              续拍下一段
+            </Button>
           )}
           {live.source === 'upload' && !video && (
             <div className="grid grid-cols-2 gap-1.5">

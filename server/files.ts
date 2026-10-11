@@ -115,7 +115,7 @@ export interface SaveAssetInput {
   taskId?: string | null;
   storyId?: string | null;
   shotId?: string | null;
-  purpose?: Asset['purpose'] | 'film' | 'voice' | null;
+  purpose?: Asset['purpose'];
   gen?: GenInfo | null;
   parentAssetId?: string | null;
   lineage?: Asset['lineage'];

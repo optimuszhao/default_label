@@ -244,6 +244,7 @@ test('每个页面都能打开，没有控制台报错，并留存截图', async
     ['inspire', '/studio/inspire'],
     ['stories', '/studio/stories'],
     ['story-editor', `/studio/stories/${story.id}`],
+    ['story-preview', `/studio/stories/${story.id}?tab=preview`],
     ['workflows', '/studio/workflows'],
     ['queue', '/studio/queue'],
     ['assets', '/studio/assets'],

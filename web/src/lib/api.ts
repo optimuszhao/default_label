@@ -65,6 +65,35 @@ export async function request<T>(method: string, url: string, body?: unknown): P
   return data as T;
 }
 
+export interface FilmOptions {
+  stills?: boolean;
+  voice?: boolean;
+  musicAssetId?: string | null;
+  musicVolume?: number;
+}
+
+export interface FilmPlan {
+  ffmpeg: boolean;
+  clips: number;
+  stills: number;
+  missing: { shotId: string; number: number; code: string | null }[];
+  voices: number;
+  duration: number;
+  mode: 'copy' | 'reencode' | null;
+  estimateSeconds: number;
+  version: number;
+}
+
+export interface StoryNote {
+  id: string;
+  shotId: string | null;
+  atSec: number | null;
+  text: string;
+  resolved: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Session {
   user: User | null;
   settings: UserSettings | null;
@@ -325,6 +354,23 @@ export const api = {
   updateSeries: (id: string, patch: { title?: string; settings?: SeriesSettings }) => request<SeriesSummary>('PATCH', `/api/series/${id}`, patch),
   deleteSeries: (id: string) => request('DELETE', `/api/series/${id}`),
   createEpisode: (id: string, title: string, copyStructureFrom?: string | null) => request<Story>('POST', `/api/series/${id}/episodes`, { title, copyStructureFrom }),
+
+  filmPlan: (id: string, options: FilmOptions) => request<FilmPlan>('POST', `/api/stories/${id}/film/plan`, options),
+  renderFilm: (id: string, options: FilmOptions) => request<{ job: Job; plan: FilmPlan }>('POST', `/api/stories/${id}/film`, options),
+  films: (id: string) => request<Asset[]>('GET', `/api/stories/${id}/films`),
+  ttsMode: () => request<{ mode: 'api' | 'mock' }>('GET', '/api/tts'),
+  voiceLines: (id: string, body: { lineIds?: string[]; overwrite?: boolean } = {}) => request<{ job: Job; count: number; mode: 'api' | 'mock' }>('POST', `/api/stories/${id}/voice`, body),
+  storyNotes: (id: string) => request<StoryNote[]>('GET', `/api/stories/${id}/notes`),
+  addStoryNote: (id: string, note: { shotId?: string | null; atSec?: number | null; text: string }) => request<StoryNote>('POST', `/api/stories/${id}/notes`, note),
+  patchStoryNote: (id: string, noteId: string, patch: { text?: string; resolved?: boolean }) => request<StoryNote>('PATCH', `/api/stories/${id}/notes/${noteId}`, patch),
+  deleteStoryNote: (id: string, noteId: string) => request('DELETE', `/api/stories/${id}/notes/${noteId}`),
+  /** 导入故事包：原始字节上传 */
+  importStoryPackage: async (file: File) => {
+    const response = await fetch('/api/stories/import', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/zip' }, body: file });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(response.status, data?.error ?? `导入失败（${response.status}）`, data?.requestId ?? null);
+    return data as Story & { imported: { assets: number; skipped: number } };
+  },
 
   assist: <T>(kind: AssistKind, input: Record<string, unknown>) => request<T>('POST', `/api/assist/${kind}`, input),
 };

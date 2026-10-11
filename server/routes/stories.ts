@@ -14,6 +14,16 @@ import { PassThrough } from 'node:stream';
 import { writeZip } from '../media/zip.ts';
 import { STORY_TEMPLATES, findTemplate } from '../../shared/story-templates.ts';
 import { applyOps, defaultData, loadStory, pruneSnapshots, snapshotStory, writeStory } from '../stories/store.ts';
+import { enqueueJob, getJobRow, toJob } from '../jobs/runner.ts';
+import { newTempFile } from '../files.ts';
+import { ttsMode } from '../providers/tts.ts';
+import { filmVersions, planFilm } from '../stories/film.ts';
+import { attachImportedAssets, importPackage, packageEntries, remapStoryIds } from '../stories/package.ts';
+import { voiceTargets } from '../stories/voice.ts';
+import { createWriteStream } from 'node:fs';
+import fs from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
 import { bad, parse, uid } from './common.ts';
 
 /** 每个故事保留的修订记录数（其他设备离线太久时直接重新载入整篇） */
@@ -229,37 +239,8 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
     if (!row) return bad(reply, '故事不存在', 404);
     if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
     const { title, data } = loadStory(id);
-    const map = new Map<string, string>();
-    const fresh = (old: string, prefix: string) => {
-      const next = `${prefix}${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
-      map.set(old, next);
-      return next;
-    };
-    // 系列共享的设定不复制（新故事不在系列里，会变成普通设定）
-    const copy = structuredClone(data);
-    copy.characters = copy.characters.map((c) => ({ ...c, id: fresh(c.id, 'c_'), seriesShared: undefined }));
-    copy.elements = (copy.elements ?? []).map((e) => ({ ...e, id: fresh(e.id, 'e_'), seriesShared: undefined }));
-    for (const chapter of copy.chapters) {
-      chapter.id = fresh(chapter.id, 'ch_');
-      for (const scene of chapter.scenes) {
-        scene.id = fresh(scene.id, 'sc_');
-        for (const line of scene.dialogue) line.id = fresh(line.id, 'd_');
-        for (const shot of scene.shots) shot.id = fresh(shot.id, 'sh_');
-      }
-    }
-    const remap = (value: string | null | undefined) => (value ? (map.get(value) ?? value) : value);
-    for (const chapter of copy.chapters) {
-      for (const scene of chapter.scenes) {
-        scene.locationId = remap(scene.locationId) ?? null;
-        for (const line of scene.dialogue) line.characterId = remap(line.characterId) ?? null;
-        for (const shot of scene.shots) {
-          shot.characterIds = shot.characterIds.map((x) => remap(x)!);
-          shot.elementIds = shot.elementIds?.map((x) => remap(x)!);
-          shot.dialogueIds = shot.dialogueIds.map((x) => remap(x)!);
-          shot.locked = undefined;
-        }
-      }
-    }
+    const { data: copy } = remapStoryIds(data);
+    for (const chapter of copy.chapters) for (const scene of chapter.scenes) for (const shot of scene.shots) shot.locked = undefined;
     const newId = createStory(uid(request), `${title} 副本`.slice(0, 80), copy, { templateId: (row.template_id as string | null) ?? null });
     return openStory(db.prepare('SELECT * FROM stories WHERE id = ?').get(newId) as Row);
   });
@@ -529,6 +510,149 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
     db.prepare("DELETE FROM tasks WHERE story_id = ? AND status != 'running'").run(id);
     db.prepare('UPDATE assets SET story_id = NULL, shot_id = NULL, purpose = NULL WHERE story_id = ?').run(id);
     return { ok: true, purged: true };
+  });
+
+  // ---------------- 成片（EXP-03） ----------------
+  const filmOptions = z.object({
+    stills: z.boolean().default(true),
+    voice: z.boolean().default(true),
+    musicAssetId: z.string().max(40).nullable().optional(),
+    musicVolume: z.number().min(0).max(1).optional(),
+  });
+
+  api.post('/api/stories/:id/film/plan', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const body = parse(filmOptions, request.body ?? {}, reply);
+    if (!body) return;
+    return planFilm(id, body);
+  });
+
+  api.post('/api/stories/:id/film', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const body = parse(filmOptions, request.body ?? {}, reply);
+    if (!body) return;
+    if (body.musicAssetId && !db.prepare("SELECT 1 FROM assets WHERE id = ? AND user_id = ? AND kind = 'audio' AND deleted_at IS NULL").get(body.musicAssetId, uid(request)))
+      return bad(reply, '配乐素材不存在');
+    const plan = await planFilm(id, body);
+    if (!plan.ffmpeg) return bad(reply, '服务器没有安装 ffmpeg，不能渲染成片（Docker 部署时设置 WITH_FFMPEG=1 重新构建镜像）');
+    if (!plan.clips) return bad(reply, '还没有可用的镜头视频');
+    const jobId = enqueueJob('story-film', { storyId: id, userId: uid(request), options: body }, { userId: uid(request), dedupeKey: `film:${id}` });
+    return { job: toJob(getJobRow(jobId)!), plan };
+  });
+
+  api.get('/api/stories/:id/films', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    return toAssets(filmVersions(id));
+  });
+
+  // ---------------- 配音（EXP-08） ----------------
+  api.get('/api/tts', async () => ({ mode: ttsMode() }));
+
+  api.post('/api/stories/:id/voice', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const body = parse(z.object({ lineIds: z.array(z.string().max(60)).max(2000).optional(), overwrite: z.boolean().default(false) }), request.body ?? {}, reply);
+    if (!body) return;
+    const count = voiceTargets(id, body).length;
+    if (!count) return bad(reply, body.overwrite ? '没有可配音的台词' : '台词都已经有配音了');
+    const jobId = enqueueJob('story-voice', { storyId: id, userId: uid(request), ...body }, { userId: uid(request), dedupeKey: `voice:${id}` });
+    return { job: toJob(getJobRow(jobId)!), count, mode: ttsMode() };
+  });
+
+  // ---------------- 审片备注（STY-15） ----------------
+  const toNote = (r: Row) => ({
+    id: String(r.id),
+    shotId: (r.shot_id as string | null) ?? null,
+    atSec: r.at_sec == null ? null : Number(r.at_sec),
+    text: String(r.text),
+    resolved: Number(r.resolved) === 1,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
+  });
+
+  api.get('/api/stories/:id/notes', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    return (db.prepare('SELECT * FROM story_notes WHERE story_id = ? ORDER BY resolved, created_at').all(id) as Row[]).map(toNote);
+  });
+
+  api.post('/api/stories/:id/notes', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    const body = parse(z.object({ shotId: z.string().max(60).nullable().optional(), atSec: z.number().min(0).max(100_000).nullable().optional(), text: z.string().trim().min(1).max(2000) }), request.body, reply);
+    if (!body) return;
+    if (body.shotId && !db.prepare('SELECT 1 FROM story_shots WHERE id = ? AND story_id = ?').get(body.shotId, id)) return bad(reply, '镜头不存在');
+    const noteId = newId('n_');
+    db.prepare('INSERT INTO story_notes (id, story_id, shot_id, user_id, at_sec, text, resolved, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)').run(
+      noteId, id, body.shotId ?? null, uid(request), body.atSec ?? null, body.text, now(), now(),
+    );
+    return toNote(db.prepare('SELECT * FROM story_notes WHERE id = ?').get(noteId) as Row);
+  });
+
+  api.patch('/api/stories/:id/notes/:noteId', async (request, reply) => {
+    const { id, noteId } = request.params as { id: string; noteId: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    const body = parse(z.object({ text: z.string().trim().min(1).max(2000).optional(), resolved: z.boolean().optional() }), request.body, reply);
+    if (!body) return;
+    const row = db.prepare('SELECT * FROM story_notes WHERE id = ? AND story_id = ?').get(noteId, id) as Row | undefined;
+    if (!row) return bad(reply, '备注不存在', 404);
+    db.prepare('UPDATE story_notes SET text = ?, resolved = ?, updated_at = ? WHERE id = ?').run(body.text ?? String(row.text), (body.resolved ?? Number(row.resolved) === 1) ? 1 : 0, now(), noteId);
+    return toNote(db.prepare('SELECT * FROM story_notes WHERE id = ?').get(noteId) as Row);
+  });
+
+  api.delete('/api/stories/:id/notes/:noteId', async (request, reply) => {
+    const { id, noteId } = request.params as { id: string; noteId: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    db.prepare('DELETE FROM story_notes WHERE id = ? AND story_id = ?').run(noteId, id);
+    return { ok: true };
+  });
+
+  // ---------------- 故事包（EXP-04） ----------------
+  api.get('/api/stories/:id/package', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const { title, entries } = packageEntries(id, uid(request));
+    const stream = new PassThrough();
+    void writeZip(entries(), stream).then(() => stream.end(), (error) => stream.destroy(error as Error));
+    reply.header('content-type', 'application/zip');
+    reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${title.replace(/[\\/:*?"<>|]/g, '_')}.weave.zip`)}`);
+    return reply.send(stream);
+  });
+
+  // 故事包的请求体是原始字节流，直接写盘
+  for (const type of ['application/zip', 'application/octet-stream']) api.addContentTypeParser(type, (_request, payload, done) => done(null, payload));
+
+  api.post('/api/stories/import', async (request, reply) => {
+    const body = request.body as Readable | undefined;
+    if (!body || typeof (body as Readable).pipe !== 'function') return bad(reply, '请上传 .weave.zip 文件（content-type: application/zip）');
+    const temp = await newTempFile('zip');
+    try {
+      let size = 0;
+      body.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 4 * 1024 ** 3) body.destroy(new Error('故事包超过 4 GB'));
+      });
+      await pipeline(body, createWriteStream(temp));
+      const imported = await importPackage(temp, uid(request)).catch((error: Error) => error);
+      if (imported instanceof Error) return bad(reply, imported.message);
+      const storyId = createStory(uid(request), imported.title, imported.data);
+      attachImportedAssets(storyId, imported);
+      const story = openStory(db.prepare('SELECT * FROM stories WHERE id = ?').get(storyId) as Row);
+      return { ...story, imported: { assets: imported.assets.length, skipped: imported.skipped } };
+    } finally {
+      await fs.rm(temp, { force: true });
+    }
   });
 
   api.post('/api/stories/:id/restore', async (request, reply) => {

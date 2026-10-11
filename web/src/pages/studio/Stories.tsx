@@ -1,7 +1,7 @@
 // 故事列表 v2（STY-13）：进行中 / 已完成 / 已归档 / 回收站；系列；复制故事；从上次编辑的位置继续；新建时可选模板
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Archive, BookOpenText, CheckCircle2, Clapperboard, Copy, Library, MoreHorizontal, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react';
+import { Archive, BookOpenText, CheckCircle2, Clapperboard, Copy, Library, MoreHorizontal, Plus, RotateCcw, Trash2, Undo2, Upload } from 'lucide-react';
 import { STORY_TEMPLATES } from '../../../../shared/story-templates.ts';
 import type { StorySummary } from '../../../../shared/types.ts';
 import { Button, Empty, IconButton, Modal, Segmented } from '../../components/ui.tsx';
@@ -133,6 +133,21 @@ export default function Stories() {
     }
   }
 
+  const importRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  async function importPackage(file: File) {
+    setImporting(true);
+    try {
+      const story = await api.importStoryPackage(file);
+      useStore.getState().toast(`已导入「${story.title}」，带入 ${story.imported.assets} 个素材${story.imported.skipped ? `，${story.imported.skipped} 个无法读取已跳过` : ''}`, 'success');
+      navigate(`/studio/stories/${story.id}`);
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function createSeries() {
     const name = await promptDialog({ title: '新建系列', message: '系列里的各集共享画风、比例和标记为"系列共享"的角色设定。', placeholder: '系列名', maxLength: 80, confirmText: '创建' });
     if (!name) return;
@@ -154,7 +169,22 @@ export default function Stories() {
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">故事工坊</h1>
           <p className="mt-1 text-sm text-fg-3">大纲 → 设定库 → 章节剧本 → 分镜 → 成片，构建任意长度的视频故事、绘本和漫画。</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            aria-label="选择故事包"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (file) void importPackage(file);
+            }}
+          />
+          <Button variant="ghost" icon={<Upload className="size-4" />} loading={importing} onClick={() => importRef.current?.click()}>
+            导入故事包
+          </Button>
           <Button variant="ghost" icon={<Library className="size-4" />} onClick={() => void createSeries()}>
             新建系列
           </Button>

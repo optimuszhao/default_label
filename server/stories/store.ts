@@ -92,6 +92,7 @@ export function loadStory(storyId: string): LoadedStory {
         ...(row.negative ? { negative: String(row.negative) } : {}),
         ...(data.outfits ? { outfits: data.outfits as Character['outfits'] } : {}),
         ...(others.length ? { refs: others } : {}),
+        ...(data.voice ? { voice: String(data.voice) } : {}),
         ...(data.seriesShared ? { seriesShared: true } : {}),
       });
     } else {
@@ -255,7 +256,7 @@ function insertElement(storyId: string, userId: string, item: Record<string, unk
   const ts = now();
   const data =
     kind === 'character'
-      ? pick(item, ['role', 'personality', 'aliases', 'seed', 'outfits', 'seriesShared'])
+      ? pick(item, ['role', 'personality', 'aliases', 'seed', 'outfits', 'voice', 'seriesShared'])
       : pick(item, ['aliases', 'seed', 'variants', 'seriesShared']);
   const seriesId = item.seriesShared ? (((db.prepare('SELECT series_id FROM stories WHERE id = ?').get(storyId) as Row | undefined)?.series_id as string | null) ?? null) : null;
   db.prepare(

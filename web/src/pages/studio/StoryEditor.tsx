@@ -184,6 +184,7 @@ export default function StoryEditor() {
                   ['字幕（ASS）', `/api/stories/${id}/export/subtitles.ass`],
                   ['镜头表（CSV）', `/api/stories/${id}/export/shots.csv`],
                   ['全部关键帧（ZIP）', `/api/stories/${id}/export/keyframes.zip`],
+                  ['故事包（.weave.zip，可导入）', `/api/stories/${id}/package`],
                 ].map(([label, href]) => (
                   <a key={href} role="menuitem" href={href} className="block rounded-lg px-3 py-1.5 hover:bg-white/[0.08]">
                     {label}
