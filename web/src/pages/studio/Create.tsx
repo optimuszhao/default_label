@@ -1,5 +1,5 @@
-// 创作台 2.0：上面是按天分组的创作流水（可以一直翻到最早的作品），底部是输入区
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// 创作台 2.0：像聊天一样，最新的作品在最下面紧挨输入区，往上翻是更早的历史（按天分组，一直能翻到最早）
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Check,
@@ -70,7 +70,7 @@ const FeedCard = memo(function FeedCard({ task, onOpen }: { task: Task; onOpen: 
   }
 
   return (
-    <article className="cv-auto">
+    <article className="cv-auto" data-feed-card>
       <div className="mb-2.5 flex items-start gap-3">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-white/[0.06]">
           {video ? <Film className="size-3.5" /> : <ImageIcon className="size-3.5" />}
@@ -216,6 +216,16 @@ export default function Create() {
   const mountedAt = useRef(Date.now());
   const sentinel = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
+  const feedRef = useRef<HTMLDivElement>(null);
+  /** 视线锚点：当前看着的那张卡片和它离视口顶部的距离。上方插入更早的作品、图片加载、卡片渲染变高时，
+   *  把它挪回原来的位置，视线就不会跳 */
+  const anchor = useRef<{ el: Element; top: number } | null>(null);
+  /** 首屏和提交新作品后贴到底部 */
+  const stickBottom = useRef(true);
+  const atBottom = useRef(true);
+  /** 自己触发的滚动（贴底、挪回锚点）不重新记锚点，只有用户滚动才记 */
+  const selfScroll = useRef(false);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     void loadCatalog();
@@ -263,6 +273,8 @@ export default function Create() {
 
   // 筛选变化：从头加载
   useEffect(() => {
+    stickBottom.current = true;
+    setReady(false);
     setFeedIds([]);
     setNext(null);
     setDone(false);
@@ -281,11 +293,76 @@ export default function Create() {
     }, { rootMargin: '600px' });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [loadPage, loading, next, done]);
+    // ready：首屏贴底之后才开始往上加载，否则一打开顶部哨兵就在视野里
+  }, [loadPage, loading, next, done, ready]);
+
+  // 滚动由这里接管（浏览器自带的滚动锚定会和下面的补偿叠加）
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.overflowAnchor;
+    root.style.overflowAnchor = 'none';
+    let frame = 0;
+    const onScroll = () => {
+      atBottom.current = window.innerHeight + window.scrollY >= root.scrollHeight - 160;
+      if (selfScroll.current) {
+        selfScroll.current = false;
+        return;
+      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(recordAnchor);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      root.style.overflowAnchor = previous;
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+
+  const toBottom = (smooth = false) => {
+    selfScroll.current = !smooth;
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  };
+
+  /** 记下视口里第一张卡片（顶部导航以下）的位置 */
+  function recordAnchor() {
+    const cards = feedRef.current?.querySelectorAll('[data-feed-card]') ?? [];
+    for (const el of cards) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom > 80) {
+        anchor.current = { el, top: rect.top };
+        return;
+      }
+    }
+    anchor.current = null;
+  }
+
+  /** 把锚点卡片挪回记下的位置 */
+  function restoreAnchor() {
+    const saved = anchor.current;
+    if (!saved || !saved.el.isConnected) return;
+    const delta = saved.el.getBoundingClientRect().top - saved.top;
+    if (Math.abs(delta) > 0.5) {
+      selfScroll.current = true;
+      window.scrollBy(0, delta);
+    }
+  }
+
+  // 内容高度变化（插入更早的作品、图片加载、卡片渲染）：在底部就贴底，否则保持视线
+  useEffect(() => {
+    const el = feedRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (stickBottom.current || atBottom.current) toBottom();
+      else restoreAnchor();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const search = useDebouncedCallback((value: string) => setQuery(value.trim()), 350);
 
-  // 新提交的任务（SSE 推来的）出现在最上面
+  // 新提交的任务（SSE 推来的）出现在最下面
   const list = useMemo(() => {
     const seen = new Set(feedIds);
     const live = Object.values(tasks)
@@ -297,9 +374,10 @@ export default function Create() {
     return [...live, ...feedIds.map((id) => tasks[id]).filter((t): t is Task => Boolean(t))];
   }, [tasks, feedIds, kind, favorite, query]);
 
+  // 从早到晚排：最早的在上面，最新的在下面
   const groups = useMemo(() => {
     const result: { label: string; items: Task[] }[] = [];
-    for (const task of list) {
+    for (const task of [...list].reverse()) {
       const label = dayLabel(task.createdAt);
       const last = result.at(-1);
       if (last?.label === label) last.items.push(task);
@@ -307,6 +385,22 @@ export default function Create() {
     }
     return result;
   }, [list]);
+
+  // 列表变化后调整滚动：加载了更早的一页 → 保持视线位置；首屏 / 新提交 → 贴到底部
+  const newest = list[0]?.id;
+  const lastNewest = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (stickBottom.current && list.length) {
+      toBottom();
+      stickBottom.current = false;
+      atBottom.current = true;
+      // 等这一帧布局稳定后再允许往上加载更早的
+      requestAnimationFrame(() => setReady(true));
+    } else if (newest && lastNewest.current && newest !== lastNewest.current) {
+      toBottom(true);
+    } else restoreAnchor();
+    lastNewest.current = newest;
+  }, [list, newest]);
 
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-56px-76px)] max-w-5xl flex-col px-4 pt-5 sm:px-6 md:min-h-dvh md:pt-8">
@@ -344,7 +438,11 @@ export default function Create() {
         </Link>
       </div>
 
-      <div className="flex-1 space-y-8 pb-8">
+      <div ref={feedRef} className="flex flex-1 flex-col justify-end space-y-8 pb-8">
+        <div ref={ready ? sentinel : undefined} className="flex justify-center py-2">
+          {loading && <Spinner />}
+          {done && list.length > PAGE && <p className="text-xs text-fg-3">已经到最早的作品了</p>}
+        </div>
         {list.length === 0 && !loading ? (
           query || favorite ? (
             <Empty icon={<Search className="size-6" />} title="没有找到" hint="换个关键词，或者清除筛选" />
@@ -374,10 +472,6 @@ export default function Create() {
             </section>
           ))
         )}
-        <div ref={sentinel} className="flex justify-center py-2">
-          {loading && <Spinner />}
-          {done && list.length > PAGE && <p className="text-xs text-fg-3">已经到最早的作品了</p>}
-        </div>
       </div>
 
       <div className="sticky bottom-[calc(76px+env(safe-area-inset-bottom))] z-20 -mx-1 pb-3 md:bottom-0 md:pb-6">
