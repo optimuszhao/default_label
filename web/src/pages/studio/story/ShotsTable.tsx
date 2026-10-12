@@ -1,126 +1,16 @@
 // 分镜表格视图（STY-11）：全片镜头一张表，虚拟滚动；单元格内直接编辑；拖动行在场次内排序；
-// 从 Excel / 表格软件复制几行粘贴进来就变成镜头；镜头表 CSV 导出后改好再导回（按 id 匹配）。
+// 从 Excel / 表格软件复制几行粘贴进来就变成镜头；镜头表 CSV 导入见 shotCsv.ts。
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useMemo, useRef, useState } from 'react';
 import { ClipboardPaste, Download, GripVertical, Lock, Upload } from 'lucide-react';
-import type { Shot, StoryData } from '../../../../../shared/types.ts';
+import type { Shot } from '../../../../../shared/types.ts';
 import { Button, Media } from '../../../components/ui.tsx';
-import { CAMERA_MOVES, SHOT_SIZES } from '../../../lib/presets.ts';
 import { useStore } from '../../../lib/store.ts';
+import { CAMERA_MOVES, SHOT_SIZES } from '../../../lib/presets.ts';
 import { cx } from '../../../lib/util.ts';
 import { useStory } from './context.tsx';
 import { EMPTY_MEDIA, flattenShots, newShot, updateScene, updateShot } from './model.ts';
-
-/** 解析 CSV（支持引号、转义引号、引号里的换行） */
-export function parseCsv(text: string, delimiter = ','): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = '';
-  let quoted = false;
-  const src = text.replace(/^﻿/, '');
-  for (let i = 0; i < src.length; i++) {
-    const ch = src[i];
-    if (quoted) {
-      if (ch === '"' && src[i + 1] === '"') {
-        cell += '"';
-        i++;
-      } else if (ch === '"') quoted = false;
-      else cell += ch;
-    } else if (ch === '"' && cell === '') quoted = true;
-    else if (ch === delimiter) {
-      row.push(cell);
-      cell = '';
-    } else if (ch === '\n' || ch === '\r') {
-      if (ch === '\r' && src[i + 1] === '\n') i++;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = '';
-    } else cell += ch;
-  }
-  if (cell !== '' || row.length) {
-    row.push(cell);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((c) => c.trim() !== ''));
-}
-
-const SIZE_SET = new Set<string>(SHOT_SIZES);
-const MOVE_SET = new Set<string>(CAMERA_MOVES);
-
-/**
- * 一行表格 → 镜头字段。有表头时按列名（景别 / 运镜 / 时长 / 描述…）取；
- * 没有表头时按内容猜：景别词、运镜词、数字是时长，其余拼成描述。
- */
-export function rowToShot(cells: string[], header: string[] | null): Partial<Shot> {
-  const get = (names: string[]) => {
-    if (!header) return undefined;
-    const index = header.findIndex((h) => names.some((n) => h.includes(n)));
-    return index >= 0 ? cells[index]?.trim() : undefined;
-  };
-  if (header) {
-    const duration = Number(get(['时长', '秒', 'duration']));
-    return {
-      shotSize: get(['景别', 'size']) || '中景',
-      cameraMove: get(['运镜', '镜头运动', 'camera']) || '固定',
-      duration: Number.isFinite(duration) && duration > 0 ? Math.min(30, duration) : 5,
-      description: get(['画面描述', '描述', '画面', '内容', 'description']) ?? '',
-      code: get(['镜头编号', '编号', 'code']) || undefined,
-    };
-  }
-  const patch: Partial<Shot> = { shotSize: '中景', cameraMove: '固定', duration: 5, description: '' };
-  const rest: string[] = [];
-  for (const raw of cells) {
-    const cell = raw.trim();
-    if (!cell) continue;
-    if (SIZE_SET.has(cell)) patch.shotSize = cell;
-    else if (MOVE_SET.has(cell)) patch.cameraMove = cell;
-    else if (/^\d+(\.\d+)?\s*(s|秒)$/.test(cell)) patch.duration = Math.min(30, Number.parseFloat(cell));
-    else if (/^\d+$/.test(cell)) continue; // 序号
-    else rest.push(cell);
-  }
-  patch.description = rest.join('，');
-  return patch;
-}
-
-function looksLikeHeader(cells: string[]): boolean {
-  return cells.some((cell) => /景别|运镜|时长|描述|画面|编号/.test(cell));
-}
-
-/** 表格文本（制表符或逗号分隔）→ 一组镜头字段 */
-export function shotsFromTable(text: string): Partial<Shot>[] {
-  const delimiter = text.includes('\t') ? '\t' : ',';
-  const rows = parseCsv(text, delimiter);
-  if (!rows.length) return [];
-  const header = looksLikeHeader(rows[0]) ? rows[0] : null;
-  return (header ? rows.slice(1) : rows).filter((row) => !row[0]?.startsWith('#')).map((row) => rowToShot(row, header));
-}
-
-/** 导回 CSV：按 id 更新已有镜头（景别、运镜、时长、描述、编号），不认识的 id 追加到 fallback 场次 */
-export function applyCsv(data: StoryData, text: string, fallbackSceneId: string | null): { data: StoryData; updated: number; added: number } {
-  const rows = parseCsv(text);
-  if (!rows.length) return { data, updated: 0, added: 0 };
-  const header = rows[0];
-  const idIndex = header.findIndex((h) => h.trim() === 'id');
-  let updated = 0;
-  let added = 0;
-  let next = data;
-  for (const row of rows.slice(1)) {
-    if (row[0]?.startsWith('#')) continue;
-    const patch = rowToShot(row, header);
-    const id = idIndex >= 0 ? row[idIndex]?.trim() : '';
-    const found = id ? flattenShots(next).find((item) => item.shot.id === id) : null;
-    if (found) {
-      if (found.shot.locked) continue;
-      next = updateShot(found.scene.id, id, patch)(next);
-      updated++;
-    } else if (fallbackSceneId) {
-      next = updateScene(fallbackSceneId, (s) => ({ ...s, shots: [...s.shots, newShot(patch)] }))(next);
-      added++;
-    }
-  }
-  return { data: next, updated, added };
-}
+import { applyCsv, shotsFromTable } from './shotCsv.ts';
 
 const COLUMNS = '2.25rem 3rem 7.5rem 5.25rem 5.25rem 3.75rem minmax(16rem,1fr) 9rem 4.5rem 4.5rem';
 
@@ -148,7 +38,7 @@ export function ShotsTable() {
   async function importCsv(file: File) {
     const result = applyCsv(data, await file.text(), targetScene);
     update(() => result.data);
-    toast(`导入完成：更新 ${result.updated} 个，新增 ${result.added} 个镜头`, 'success');
+    toast(`导入完成：更新 ${result.updated} 个，新增 ${result.added} 个镜头${result.created ? `，新建 ${result.created} 个场次` : ''}`, 'success');
   }
 
   function drop(targetId: string) {
@@ -194,7 +84,7 @@ export function ShotsTable() {
         <a href={`/api/stories/${storyId}/export/shots.csv`} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-fg-2 hover:bg-white/[0.06]">
           <Download className="size-3.5" /> 导出 CSV
         </a>
-        <input ref={fileRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => e.target.files?.[0] && void importCsv(e.target.files[0]).finally(() => (e.target.value = ''))} />
+        <input ref={fileRef} type="file" accept=".csv,text/csv" hidden aria-label="选择镜头表 CSV" onChange={(e) => e.target.files?.[0] && void importCsv(e.target.files[0]).finally(() => (e.target.value = ''))} />
         <Button size="sm" variant="ghost" icon={<Upload className="size-3.5" />} onClick={() => fileRef.current?.click()}>
           导入 CSV
         </Button>
