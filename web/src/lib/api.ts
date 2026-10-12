@@ -355,6 +355,9 @@ export const api = {
   deleteSeries: (id: string) => request('DELETE', `/api/series/${id}`),
   createEpisode: (id: string, title: string, copyStructureFrom?: string | null) => request<Story>('POST', `/api/series/${id}/episodes`, { title, copyStructureFrom }),
 
+  storyChains: (id: string) => request<{ shotId: string; afterShotId: string; createdAt: number }[]>('GET', `/api/stories/${id}/chains`),
+  addStoryChain: (id: string, shotId: string) => request<{ ok: true; afterShotId: string }>('POST', `/api/stories/${id}/chains`, { shotId }),
+  cancelStoryChain: (id: string, shotId: string) => request<{ ok: boolean }>('DELETE', `/api/stories/${id}/chains/${shotId}`),
   filmPlan: (id: string, options: FilmOptions) => request<FilmPlan>('POST', `/api/stories/${id}/film/plan`, options),
   renderFilm: (id: string, options: FilmOptions) => request<{ job: Job; plan: FilmPlan }>('POST', `/api/stories/${id}/film`, options),
   films: (id: string) => request<Asset[]>('GET', `/api/stories/${id}/films`),

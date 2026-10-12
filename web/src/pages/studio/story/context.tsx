@@ -5,6 +5,7 @@ import type { Character, Scene, Shot, StoryData } from '../../../../../shared/ty
 import { api } from '../../../lib/api.ts';
 import { imageParams } from '../../../lib/presets.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
+import { useChains } from './chains.ts';
 import { flattenShots, updateShot, type Recipe, type ShotMedia } from './model.ts';
 
 export { DEFAULT_KEYFRAME_NEGATIVE } from '../../../../../shared/story-prompt.ts';
@@ -80,6 +81,18 @@ export function useShotGenerator() {
 
   async function video(scene: Scene, shot: Shot) {
     try {
+      // 接续上一镜，但上一镜的视频还在生成：排在它后面，完成后服务端自动截尾帧生成这一镜
+      if (shot.firstFrame?.mode === 'prev_last') {
+        const flat = flattenShots(data);
+        const index = flat.findIndex((item) => item.shot.id === shot.id);
+        const prev = index > 0 ? flat[index - 1].shot : null;
+        if (prev && media.get(prev.id)?.videoTask) {
+          await api.addStoryChain(storyId, shot.id);
+          void useChains.getState().refresh(storyId);
+          toast('上一镜的视频还在生成，完成后会自动截它的尾帧接着生成这一镜', 'success');
+          return;
+        }
+      }
       const first = await resolveFirstFrame(data, shot, media);
       const task = await api.createTask({ ...buildShotTask(data, scene, shot, 'video', { storyId, caps, firstFrameAssetId: first }), runNow: true });
       upsertTasks([task]);

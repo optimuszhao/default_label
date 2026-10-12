@@ -4,6 +4,7 @@ import { Moon } from 'lucide-react';
 import { Button, Modal, Segmented, Spinner, Toggle } from '../../../components/ui.tsx';
 import { api, request } from '../../../lib/api.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
+import { useChains } from './chains.ts';
 import { useBatchDialog, useStory, type BatchScope } from './context.tsx';
 
 type Content = 'keyframe' | 'video' | 'keyframe_then_video';
@@ -12,6 +13,9 @@ type Mode = 'missing' | 'append' | 'redo';
 interface Plan {
   items: { shotId: string; purpose: string }[];
   followUps: number;
+  chained: { shotId: string; afterShotId: string }[];
+  chainLongest: number;
+  relayNoFfmpeg: number;
   skipped: { locked: number; noDescription: number; active: number; hasResult: number };
   tasks: number;
   gpuSeconds: number;
@@ -79,7 +83,9 @@ export function BatchDialog() {
       const result = await request<{ created: number; plan: Plan }>('POST', `/api/stories/${storyId}/generate`, { scope, content, mode, idle });
       upsertTasks(await api.tasks({ storyId, limit: 1000 }));
       const later = result.plan.followUps ? `，另有 ${result.plan.followUps} 个视频会在关键帧完成后自动加入` : '';
-      toast(`已加入 ${result.created} 个任务${later}`, 'success');
+      const chained = result.plan.chained.length ? `，${result.plan.chained.length} 个镜头会接续上一镜依次生成` : '';
+      toast(`已加入 ${result.created} 个任务${later}${chained}`, 'success');
+      void useChains.getState().refresh(storyId);
       close();
     } catch (error) {
       reportError(error);
@@ -136,7 +142,14 @@ export function BatchDialog() {
               <p>
                 将创建 <b className="text-fg">{plan.items.length}</b> 个任务
                 {plan.followUps > 0 && <>，关键帧完成后再自动加入 <b className="text-fg">{plan.followUps}</b> 个视频</>}
+                {plan.chained.length > 0 && <>，另有 <b className="text-fg">{plan.chained.length}</b> 个镜头接续上一镜尾帧</>}
               </p>
+              {plan.chained.length > 0 && (
+                <p className="text-fg-3">
+                  接续的镜头要等上一镜视频完成、截好尾帧才开始，只能一段接一段地生成（最长一串 {plan.chainLongest} 段），总耗时会比并行长。
+                </p>
+              )}
+              {plan.relayNoFfmpeg > 0 && <p className="text-warn">服务器没有 ffmpeg，截不了尾帧：{plan.relayNoFfmpeg} 个设了接续的镜头会改用自己的关键帧。</p>}
               <p className="text-fg-3">
                 预计 GPU 时长 {formatSeconds(plan.gpuSeconds)}，全部完成约需 {formatSeconds(plan.etaSeconds)}
                 {plan.startsAt ? `（${new Date(plan.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} 开始）` : ''}

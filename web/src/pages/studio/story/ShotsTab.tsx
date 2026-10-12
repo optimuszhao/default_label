@@ -7,6 +7,7 @@ import {
   Film,
   Image as ImageIcon,
   ImagePlus,
+  Link2,
   Lock,
   LockOpen,
   Plus,
@@ -27,6 +28,7 @@ import { CAMERA_MOVES, cssRatio, SHOT_SIZES } from '../../../lib/presets.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
 import { cx } from '../../../lib/util.ts';
 import { useCompare } from '../create/derive.ts';
+import { useChains, useChainSync } from './chains.ts';
 import { useShotGenerator, useStory } from './context.tsx';
 import { EMPTY_MEDIA, findScene, moveItem, newShot, updateScene, updateShot } from './model.ts';
 import { SceneNavigator } from './SceneNavigator.tsx';
@@ -171,6 +173,7 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
   const [picking, setPicking] = useState<'keyframe' | 'first' | null>(null);
   const [inspect, setInspect] = useState(false);
   const m = media.get(shot.id) ?? EMPTY_MEDIA;
+  const chainWaiting = useChains((s) => s.waiting.has(shot.id));
   const set = (patch: Partial<Shot>) => update(updateShot(scene.id, shot.id, patch));
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   const elements = data.elements ?? [];
@@ -321,10 +324,29 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
                 <ImagePlus className="size-4" />
               </IconButton>
             </div>
-            {!imageOnly && <Button size="sm" variant={m.keyframe ? 'brand' : 'secondary'} icon={<Clapperboard className="size-3.5" />} disabled={!prompting || Boolean(m.videoTask)} onClick={() => void generator.video(scene, shot)}>
-              {shot.firstFrame?.mode === 'prev_last' ? '接续上一镜' : m.keyframe || shot.firstFrame?.mode === 'asset' ? '图生视频' : '文生视频'}
+            {!imageOnly && <Button size="sm" variant={m.keyframe ? 'brand' : 'secondary'} icon={<Clapperboard className="size-3.5" />} disabled={!prompting || Boolean(m.videoTask) || chainWaiting} onClick={() => void generator.video(scene, shot)}>
+              {chainWaiting ? '等上一镜…' : shot.firstFrame?.mode === 'prev_last' ? '接续上一镜' : m.keyframe || shot.firstFrame?.mode === 'asset' ? '图生视频' : '文生视频'}
             </Button>}
           </div>
+          {chainWaiting && (
+            <p className="flex items-center gap-2 rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-fg-2" data-testid="chain-waiting">
+              <Link2 className="size-3.5 shrink-0 text-accent" />
+              <span className="flex-1">上一镜视频完成后，自动截它的尾帧接着生成这一镜</span>
+              <button
+                className="text-fg-3 hover:text-fg"
+                onClick={async () => {
+                  try {
+                    await api.cancelStoryChain(storyId, shot.id);
+                    void useChains.getState().refresh(storyId);
+                  } catch (error) {
+                    reportError(error);
+                  }
+                }}
+              >
+                取消等待
+              </button>
+            </p>
+          )}
           {m.keyframes.length + m.videos.length > 0 && (
             <div>
               <p className="mb-1 text-[11px] text-fg-3">候选（点击选定；{locked ? '已定稿，新候选不会替换' : '定稿后批量操作不会改动'}）</p>
@@ -457,6 +479,8 @@ function useShotsView(): ['cards' | 'table', (view: 'cards' | 'table') => void] 
 
 export function ShotsTab({ imageOnly = false }: { imageOnly?: boolean }) {
   const [view, setView] = useShotsView();
+  const { storyId } = useStory();
+  useChainSync(storyId);
   const toggle = (
     <Segmented
       size="sm"
@@ -487,6 +511,19 @@ function ShotsCards({ toggle, imageOnly }: { toggle: React.ReactNode; imageOnly:
   const [designing, setDesigning] = useState(false);
   const [viewing, setViewing] = useState<Asset | null>(null);
   const found = findScene(data, sceneId);
+  // 整场接续：本场第 2 个镜头起都用上一镜尾帧做首帧（第 1 个镜头是换场，不接）
+  const followers = found ? found.scene.shots.slice(1).filter((s) => !s.locked) : [];
+  const relayAll = followers.length > 0 && followers.every((s) => s.firstFrame?.mode === 'prev_last');
+  function toggleRelay() {
+    if (!found) return;
+    const ids = new Set(followers.map((s) => s.id));
+    update(
+      updateScene(found.scene.id, (scene) => ({
+        ...scene,
+        shots: scene.shots.map((s) => (ids.has(s.id) ? { ...s, firstFrame: relayAll ? { mode: 'keyframe' as const } : { mode: 'prev_last' as const } } : s)),
+      })),
+    );
+  }
 
   async function design() {
     if (!found) return;
@@ -548,6 +585,19 @@ function ShotsCards({ toggle, imageOnly }: { toggle: React.ReactNode; imageOnly:
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {toggle}
+              {!imageOnly && found.scene.shots.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Link2 className="size-3.5" />}
+                  className={cx(relayAll && 'text-accent')}
+                  aria-pressed={relayAll}
+                  title="本场第 2 个镜头起，视频都用上一镜的最后一帧做首帧，动作连贯；批量生成时会一镜接一镜依次生成"
+                  onClick={toggleRelay}
+                >
+                  {relayAll ? '整场接续中' : '整场接续'}
+                </Button>
+              )}
               {compare.ids.length > 0 && (
                 <Button size="sm" variant="ghost" icon={<Columns2 className="size-3.5" />} onClick={() => compare.setOpen(true)}>
                   对比（{compare.ids.length}）

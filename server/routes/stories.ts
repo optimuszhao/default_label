@@ -7,7 +7,7 @@ import { publish } from '../bus.ts';
 import { db, newId, now, parseJson, type Row } from '../db.ts';
 import { indexAsset } from '../files.ts';
 import { assetUrl, toAssets } from '../repo.ts';
-import { planBatch, runBatch, type BatchRequest } from '../stories/batch.ts';
+import { addChain, cancelChain, listChains, planBatch, runBatch, type BatchRequest } from '../stories/batch.ts';
 import { ass, keyframeEntries, scriptMarkdown, scriptText, shotsCsv, srt } from '../stories/export.ts';
 import { migrateStory } from '../stories/migrate.ts';
 import { PassThrough } from 'node:stream';
@@ -510,6 +510,43 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
     db.prepare("DELETE FROM tasks WHERE story_id = ? AND status != 'running'").run(id);
     db.prepare('UPDATE assets SET story_id = NULL, shot_id = NULL, purpose = NULL WHERE story_id = ?').run(id);
     return { ok: true, purged: true };
+  });
+
+  // ---------------- 接续上一镜尾帧：等待列表 / 单镜排队 / 取消 ----------------
+  api.get('/api/stories/:id/chains', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    return listChains(id);
+  });
+
+  /** 单个镜头：上一镜视频还在生成时，排在它后面（完成后自动截尾帧生成这一镜） */
+  api.post('/api/stories/:id/chains', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = ownedStory(request, id);
+    if (!row) return bad(reply, '故事不存在', 404);
+    if (Number(row.schema) !== 2) return bad(reply, '这个故事还没有升级完成', 409);
+    const body = parse(z.object({ shotId: z.string().max(60), resolution: z.string().max(20).optional() }), request.body, reply);
+    if (!body) return;
+    const { data } = loadStory(id);
+    let prev: string | null = null;
+    let found = false;
+    for (const chapter of data.chapters)
+      for (const scene of chapter.scenes)
+        for (const shot of scene.shots) {
+          if (found) continue;
+          if (shot.id === body.shotId) found = true;
+          else prev = shot.id;
+        }
+    if (!found) return bad(reply, '镜头不存在', 404);
+    if (!prev) return bad(reply, '这是第一个镜头，没有上一镜可以接续');
+    addChain(id, uid(request), body.shotId, prev, { resolution: body.resolution ?? null });
+    return { ok: true, afterShotId: prev };
+  });
+
+  api.delete('/api/stories/:id/chains/:shotId', async (request, reply) => {
+    const { id, shotId } = request.params as { id: string; shotId: string };
+    if (!ownedStory(request, id)) return bad(reply, '故事不存在', 404);
+    return { ok: cancelChain(id, shotId) };
   });
 
   // ---------------- 成片（EXP-03） ----------------
