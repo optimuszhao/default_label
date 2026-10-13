@@ -27,10 +27,21 @@ FROM ${NODE_IMAGE}
 # Debian 源访问慢时可指定镜像，例如 --build-arg APT_MIRROR=mirrors.aliyun.com
 ARG WITH_FFMPEG=1
 ARG APT_MIRROR=
-RUN if [ "$WITH_FFMPEG" = "1" ]; then \
+# 下载缓存：apt 的包缓存挂成构建缓存（不进镜像），网络不稳中途断掉时，已经下好的包留着，
+# 下次构建只补下缺的；同一次构建里也会重试 5 轮，每轮只下还没下到的包。
+# 官方镜像自带的 docker-clean 会在安装后删掉下载的包，要先去掉，缓存才留得住。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if [ "$WITH_FFMPEG" = "1" ]; then \
       if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; fi && \
-      printf 'Acquire::Retries "8";\nAcquire::http::Pipeline-Depth "0";\n' > /etc/apt/apt.conf.d/80-retries && \
-      apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*; \
+      rm -f /etc/apt/apt.conf.d/docker-clean && \
+      printf 'Acquire::Retries "8";\nAcquire::http::Pipeline-Depth "0";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\n' > /etc/apt/apt.conf.d/80-retries && \
+      { apt-get update || exit 1; } && \
+      ok=0; for i in 1 2 3 4 5; do \
+        apt-get install -y --no-install-recommends --download-only ffmpeg && ok=1 && break; \
+        echo "第 $i 轮下载没有完成，10 秒后只补下缺的包"; sleep 10; \
+      done; \
+      [ "$ok" = 1 ] && apt-get install -y --no-install-recommends ffmpeg && ffmpeg -version | head -1; \
     fi
 
 # 构建时注入版本信息：docker compose build --build-arg GIT_SHA=$(git rev-parse --short HEAD)
