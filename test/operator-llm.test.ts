@@ -57,6 +57,17 @@ describe('朋友接口新能力', () => {
     await until(async () => (await me.get<any[]>('/api/tasks')).find((t) => t.id === task.id && t.status === 'running'), 10_000, '提交到算子');
     await me.post(`/api/tasks/${task.id}/cancel`);
     await until(async () => (await requests()).some((r) => /^\/api\/tasks\/fake-\d+\/cancel$/.test(r.path)), 10_000, '算子收到取消');
+
+    // 反过来：对方那边取消了（状态 cancelled），织影这边直接判失败，不等到超时
+    const other = await me.post('/api/tasks', { type: 't2i', prompt: '对方取消', params: IMAGE_PARAMS, runNow: true });
+    await until(async () => (await me.get<any[]>('/api/tasks')).find((t) => t.id === other.id && t.status === 'running'), 10_000, '提交到算子');
+    // 假算子的任务号按提交顺序递增：最新一次提交就是它
+    const remoteId = `fake-${(await requests()).filter((r) => r.path.startsWith('/api/generate/')).length}`;
+    const { token } = (await (await fetch(`${h.operator}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appid: 'dev', secret: 'dev' }) })).json()) as { token: string };
+    const cancelRemote = await fetch(`${h.operator}/api/tasks/${remoteId}/cancel`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    assert.equal(cancelRemote.status, 200);
+    const failed = await until(async () => (await me.get<any[]>('/api/tasks')).find((t) => t.id === other.id && ['failed', 'queued'].includes(t.status)), 30_000, '判失败');
+    assert.match(String(failed.lastError), /取消/);
     await h.scenario({ pendingMs: 300 });
   });
 

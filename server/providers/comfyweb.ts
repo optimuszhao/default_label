@@ -10,7 +10,7 @@
 //   查询任务    GET  /api/tasks/{task_id}       {status, stage, result:{category, files, upscaled}, error}
 //               status: pending → running → postprocessing（转码 / 超分）→ completed / failed
 //   下载产物    GET  /api/products/download/{video|image}/{filename}
-//   取消任务    POST /api/tasks/{task_id}/cancel     排队中的从队列删掉，执行中的直接中断；已结束返回 400
+//   取消任务    POST /api/tasks/{task_id}/cancel     排队中的从队列删掉，执行中的直接中断；已结束返回 400；之后状态为 cancelled
 //   语言模型    POST /api/llm/v1/chat/completions    OpenAI 兼容；GET /api/llm/models 列出模型
 //   分镜扩写    POST /api/llm/expand-prompt          {scene, duration} → {prompt}（按对方视频模型的分镜写法）
 //
@@ -589,6 +589,8 @@ export class ComfyWebProvider implements Provider {
     const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Json;
     const status = String(data.status ?? data.state ?? '').toLowerCase();
     const stage = (typeof data.stage === 'string' && data.stage.trim()) || STAGE_FALLBACK[status];
+    // 对方那边被取消（他自己取消、服务重启清理）：直接判失败，不再等到超时
+    if (status === 'cancelled' || status === 'canceled') return { id, state: 'failed', progress: 0, files: [], error: '生成服务那边取消了这个任务' };
     if (status === 'failed' || status === 'error') {
       runningSince.delete(id);
       return { id, state: 'failed', progress: 0, files: [], error: errorText(data) ?? (data.error_message as string) ?? '生成失败' };

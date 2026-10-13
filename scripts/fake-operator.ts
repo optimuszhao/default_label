@@ -174,7 +174,7 @@ function stateOf(task: FakeTask): { status: string; stage: string } {
   const age = Date.now() - task.createdAt;
   const { pendingMs, runningMs, postprocessingMs } = task.timing;
   const video = task.type.includes('video');
-  if (task.canceled) return { status: 'failed', stage: '已取消' };
+  if (task.canceled) return { status: 'cancelled', stage: '已取消' };
   if (age < pendingMs) return { status: 'pending', stage: '' };
   if (task.outcome === 'fail' && age >= pendingMs) return { status: 'failed', stage: '' };
   if (age < pendingMs + runningMs) return { status: 'running', stage: video ? '视频生成中' : '图片生成中' };
@@ -343,7 +343,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const task = tasks.get(decodeURIComponent(cancel[1]));
     if (!task) return send(res, 404, { detail: '任务不存在' });
     const status = stateOf(task).status;
-    if (status === 'completed' || status === 'failed') return send(res, 400, { detail: '任务已结束' });
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') return send(res, 400, { detail: '任务已结束' });
     task.canceled = true;
     requests.push({ path: pathname, params: {}, hasFile: false, at: Date.now() });
     return send(res, 200, { message: '已取消' });
