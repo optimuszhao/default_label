@@ -47,7 +47,7 @@ export interface OperatorSummary {
   visibility: 'all' | 'admin_only';
   priority: number;
   maxInflight: number;
-  settings: { imagePollMs: number; videoPollMs: number };
+  settings: { imagePollMs: number; videoPollMs: number; llmModel?: string; llmThink?: boolean };
   running: number;
   status: 'unknown' | 'online' | 'offline' | 'maintenance' | 'disabled';
   health: { image: boolean; video: boolean; message: string | null; checkedAt: number | null };

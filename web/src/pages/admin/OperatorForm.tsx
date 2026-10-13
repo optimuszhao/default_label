@@ -166,6 +166,22 @@ export function OperatorForm({
               onChange={(e) => set({ settings: { ...form.settings!, videoPollMs: Number(e.target.value) || 12000 } })}
             />
           </div>
+          <div>
+            <label className="label">语言模型（留空用对方默认）</label>
+            <input
+              className="field"
+              value={form.settings?.llmModel ?? ''}
+              onChange={(e) => set({ settings: { ...form.settings!, llmModel: e.target.value.trim() || undefined } })}
+              placeholder="例如 huihui_ai/Qwen3.8-abliterated"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm">让模型先思考再回答</p>
+              <p className="text-xs text-fg-3">默认关闭：写文案快好几倍；打开后更慢，复杂任务可能更好</p>
+            </div>
+            <Toggle checked={form.settings?.llmThink === true} onChange={(value) => set({ settings: { ...form.settings!, llmThink: value || undefined } })} label="让模型先思考再回答" />
+          </div>
           <div className="flex items-center justify-between gap-3 sm:col-span-2">
             <div>
               <p className="text-sm">仅管理员可用</p>

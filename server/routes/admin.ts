@@ -78,6 +78,9 @@ const operatorFields = {
   settings: z.object({
     imagePollMs: z.number().int().min(500).max(600_000).default(4000),
     videoPollMs: z.number().int().min(500).max(600_000).default(12000),
+    /** 算子自带语言模型：用哪个模型（空 = 对方默认）、是否允许先"思考"（更慢） */
+    llmModel: z.string().trim().max(120).optional(),
+    llmThink: z.boolean().optional(),
   }),
 };
 

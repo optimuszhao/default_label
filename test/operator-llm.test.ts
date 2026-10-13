@@ -8,7 +8,7 @@ let h: Harness;
 let me: Client;
 
 before(async () => {
-  h = await startHarness({ LLM_MOCK: '1' });
+  h = await startHarness({ LLM_MOCK: '1', ADMIN_EMAILS: 'llm-admin@test.local' });
   me = await h.user();
 });
 after(async () => h?.stop());
@@ -41,6 +41,17 @@ describe('朋友接口新能力', () => {
     const messages = chat.params.messages as { role: string; content: string }[];
     assert.match(messages.at(-1)!.content, /\/no_think$/, '默认关掉思考');
     assert.equal(chat.params.stream, false);
+  });
+
+  test('后台可以给算子指定模型、打开"先思考"', async () => {
+    await h.scenario({ llm: true });
+    const admin = await h.user('llm-admin@test.local');
+    await admin.patch('/api/admin/operators/op_default', { settings: { imagePollMs: 4000, videoPollMs: 12000, llmModel: 'qwen-big', llmThink: true } });
+    await me.post('/api/assist/polish', { prompt: '后台设置', mode: 'image' });
+    const chat = (await requests()).filter((r) => r.path === '/api/llm/v1/chat/completions').at(-1)!;
+    assert.equal(chat.params.model, 'qwen-big');
+    assert.doesNotMatch((chat.params.messages as { content: string }[]).at(-1)!.content, /\/no_think/);
+    await admin.patch('/api/admin/operators/op_default', { settings: { imagePollMs: 4000, videoPollMs: 12000 } });
   });
 
   test('分镜扩写：有算子的分镜接口就用它', async () => {
