@@ -298,6 +298,24 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
   const [inspect, setInspect] = useState(false);
   const m = media.get(shot.id) ?? EMPTY_MEDIA;
   const chainWaiting = useChains((s) => s.waiting.has(shot.id));
+  const [writingStoryboard, setWritingStoryboard] = useState(false);
+  /** 用自动拼好的视频提示词当场景（带角色外貌、地点、景别运镜），让 AI 写成按时间段的分镜 */
+  async function writeStoryboard() {
+    const sceneText = buildShotPrompt(data, scene, { ...shot, storyboard: undefined }, { purpose: 'video' }).prompt;
+    if (!sceneText.trim()) {
+      useStore.getState().toast('先写画面描述', 'info');
+      return;
+    }
+    setWritingStoryboard(true);
+    try {
+      const result = await api.assist<{ prompt: string }>('storyboard', { scene: sceneText, duration: shot.duration || 5 });
+      set({ storyboard: result.prompt.slice(0, 4000) });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setWritingStoryboard(false);
+    }
+  }
   const set = (patch: Partial<Shot>) => update(updateShot(scene.id, shot.id, patch));
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   const elements = data.elements ?? [];
@@ -539,6 +557,30 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
               <p className="label">手写提示词（填了就不再自动拼）</p>
               <textarea className="field min-h-16 text-xs" value={shot.promptOverride ?? ''} onChange={(e) => set({ promptOverride: e.target.value })} />
             </div>
+            {!imageOnly && (
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="label !mb-0">视频分镜提示词（写了就用它出视频）</p>
+                  <div className="flex gap-1">
+                    {shot.storyboard && (
+                      <button className="text-xs text-fg-3 hover:text-fg" onClick={() => set({ storyboard: undefined })}>
+                        清除
+                      </button>
+                    )}
+                    <Button size="sm" variant="ghost" icon={<Wand2 className="size-3.5" />} loading={writingStoryboard} onClick={() => void writeStoryboard()}>
+                      AI 写分镜
+                    </Button>
+                  </div>
+                </div>
+                <textarea
+                  className="field min-h-20 text-xs"
+                  value={shot.storyboard ?? ''}
+                  onChange={(e) => set({ storyboard: e.target.value || undefined })}
+                  aria-label="视频分镜提示词"
+                  placeholder="按时间段写镜头、运镜、光线，例如：[0s-2.5s] 镜头一：低角度跟拍……；点「AI 写分镜」自动生成"
+                />
+              </div>
+            )}
           </div>
           <PromptPreview data={data} scene={scene} shot={shot} />
         </div>

@@ -13,9 +13,9 @@ import { logger } from '../log.ts';
 import { deleteScope, getSecret, secretInfo, setSecret } from '../secrets.ts';
 import { ComfyWebProvider } from './comfyweb.ts';
 import { HttpProvider } from './http.ts';
-import { llmConfigured, llmHealthy } from './llm.ts';
+import { llmConfigured, llmHealthy, openAiChat } from './llm.ts';
 import { MockProvider } from './mock.ts';
-import type { OperatorContext, OperatorSettings, Provider } from './types.ts';
+import { ProviderUnavailableError, type ChatMessage, type ChatOptions, type OperatorContext, type OperatorSettings, type Provider } from './types.ts';
 
 export type OperatorKind = 'comfyweb' | 'http' | 'mock';
 
@@ -217,21 +217,64 @@ async function checkEntry(entry: Entry, force = false): Promise<void> {
   await entry.inflight;
 }
 
-let llmState = { ok: false, checkedAt: 0 };
+// ---------------- 语言模型（AI 写作助手） ----------------
+// 优先级：单独配置的 LLM_API_BASE → 算子自带的语言模型（朋友的接口 /api/llm/…）→ 模拟写作助手（LLM_MOCK=1 或启用了模拟算子）
 
-async function llmAvailable(force: boolean): Promise<boolean> {
-  if (!llmConfigured()) {
-    // 没配语言模型时，模拟算子自带模拟写作助手（开发和演示用）；LLM_MOCK=1 时也用模拟助手
-    return config.llmMock || [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled);
+let llmState = { ok: false, checkedAt: 0 };
+/** 各算子"有没有语言模型"的探测结果（列一次模型列表，缓存一段时间） */
+const operatorLlm = new Map<string, { ok: boolean; checkedAt: number }>();
+
+export type AssistBackend = { kind: 'api' } | { kind: 'operator'; adapter: Provider; name: string } | { kind: 'mock' } | { kind: 'none' };
+
+async function operatorWithLlm(force: boolean): Promise<Entry | null> {
+  const list = [...entries.values()]
+    .filter((entry) => entry.record.enabled && !entry.record.maintenance && entry.adapter.chat && entry.adapter.llmModels)
+    .sort((a, b) => b.record.priority - a.record.priority);
+  for (const entry of list) {
+    const cached = operatorLlm.get(entry.record.id);
+    const ttl = cached?.ok ? config.healthTtlMs * 3 : Math.min(config.healthTtlMs * 3, 60_000);
+    let ok = cached?.ok ?? false;
+    if (force || !cached || Date.now() - cached.checkedAt > ttl) {
+      ok = await entry.adapter.llmModels!().then((models) => models.length > 0, () => false);
+      operatorLlm.set(entry.record.id, { ok, checkedAt: Date.now() });
+    }
+    if (ok) return entry;
   }
-  if (force || Date.now() - llmState.checkedAt > config.healthTtlMs * 3) {
-    llmState = { ok: await llmHealthy(), checkedAt: Date.now() };
-  }
-  return llmState.ok;
+  return null;
 }
 
-export function useMockAssist(): boolean {
-  return !llmConfigured() && (config.llmMock || [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled));
+function mockAllowed(): boolean {
+  return config.llmMock || [...entries.values()].some((entry) => entry.record.kind === 'mock' && entry.record.enabled);
+}
+
+export async function assistBackend(force = false): Promise<AssistBackend> {
+  if (llmConfigured()) return { kind: 'api' };
+  const entry = await operatorWithLlm(force);
+  if (entry) return { kind: 'operator', adapter: entry.adapter, name: entry.record.name };
+  return mockAllowed() ? { kind: 'mock' } : { kind: 'none' };
+}
+
+async function llmAvailable(force: boolean): Promise<AssistBackend['kind']> {
+  const backend = await assistBackend(force);
+  if (backend.kind !== 'api') return backend.kind;
+  if (force || Date.now() - llmState.checkedAt > config.healthTtlMs * 3) llmState = { ok: await llmHealthy(), checkedAt: Date.now() };
+  return llmState.ok ? 'api' : 'none';
+}
+
+/** 对话：走单独配置的接口或算子自带的模型 */
+export async function chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+  const backend = await assistBackend();
+  if (backend.kind === 'api') return openAiChat(messages, options);
+  if (backend.kind === 'operator') return backend.adapter.chat!(messages, options);
+  throw new ProviderUnavailableError('未配置语言模型，AI 写作助手不可用');
+}
+
+/** 算子提供分镜扩写接口时直接用它（按它自己视频模型的写法）；没有时返回 null，由调用方用通用对话来写 */
+export async function operatorStoryboard(scene: string, duration: number): Promise<string | null> {
+  if (llmConfigured()) return null;
+  const entry = await operatorWithLlm(false);
+  if (!entry?.adapter.storyboard) return null;
+  return entry.adapter.storyboard(scene, duration);
 }
 
 function usable(entry: Entry, isAdmin: boolean): boolean {
@@ -245,7 +288,8 @@ function usable(entry: Entry, isAdmin: boolean): boolean {
 export async function getHealth(force = false, detailed = true, isAdmin = false): Promise<ProviderHealth> {
   const list = [...entries.values()].filter((entry) => usable(entry, isAdmin));
   await Promise.all(list.map((entry) => checkEntry(entry, force)));
-  const llm = await llmAvailable(force);
+  const llmMode = await llmAvailable(force);
+  const llm = llmMode !== 'none';
   const image = list.some((entry) => entry.health.image);
   const video = list.some((entry) => entry.health.video);
   const maintenance = [...entries.values()].find((entry) => entry.record.enabled && entry.record.maintenance);
@@ -258,6 +302,7 @@ export async function getHealth(force = false, detailed = true, isAdmin = false)
     image,
     video,
     llm,
+    llmMode: llmMode === 'none' ? null : llmMode,
     checkedAt: Date.now(),
     message,
   };

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUp,
   ChevronUp,
+  Clapperboard,
   Clock,
   Dice5,
   Eye,
@@ -80,10 +81,11 @@ function RefSlot({ asset, label, onPick, onClear }: { asset: Asset | null; label
   );
 }
 
-type AiKind = 'expand' | 'polish' | 'translate-en' | 'translate-zh' | 'variants' | 'inspire';
+type AiKind = 'expand' | 'storyboard' | 'polish' | 'translate-en' | 'translate-zh' | 'variants' | 'inspire';
 
-const AI_ITEMS: { kind: AiKind; label: string; icon: ReactNode; needsText: boolean }[] = [
+const AI_ITEMS: { kind: AiKind; label: string; icon: ReactNode; needsText: boolean; videoOnly?: boolean }[] = [
   { kind: 'expand', label: '扩写成完整描述', icon: <Wand2 className="size-4" />, needsText: true },
+  { kind: 'storyboard', label: '写成视频分镜（按时间段）', icon: <Clapperboard className="size-4" />, needsText: true, videoOnly: true },
   { kind: 'polish', label: '润色', icon: <Sparkles className="size-4" />, needsText: true },
   { kind: 'variants', label: '写 4 个变体', icon: <Shuffle className="size-4" />, needsText: true },
   { kind: 'translate-en', label: '翻译成英文', icon: <Languages className="size-4" />, needsText: true },
@@ -192,7 +194,10 @@ export function ComposerPanel({
     }
     setAiBusy(true);
     try {
-      if (kind === 'expand' || kind === 'polish') {
+      if (kind === 'storyboard') {
+        const result = await api.assist<{ prompt: string }>('storyboard', { scene: text, duration: compiled.params.duration ?? 5 });
+        composer.setRecipe({ text: result.prompt, ...(template && !recipe.text.trim() ? { templateId: null, presets: compiled.presets } : {}) });
+      } else if (kind === 'expand' || kind === 'polish') {
         const result = await api.assist<{ prompt: string }>(kind, { prompt: text, mode });
         composer.setRecipe({ text: result.prompt, ...(template && !recipe.text.trim() ? { templateId: null, presets: compiled.presets } : {}) });
       } else if (kind === 'translate-en' || kind === 'translate-zh') {
@@ -528,6 +533,25 @@ export function ComposerPanel({
                 />
               </div>
             )}
+            {mode === 'image' && cap.strength && state.refs.length > 0 && (
+              <div>
+                <p className="label flex items-center justify-between">
+                  <span>重绘强度</span>
+                  <span className="font-mono text-fg-2">{(recipe.overrides.strength ?? 1).toFixed(2)}</span>
+                </p>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  className="w-full accent-[var(--color-accent)]"
+                  value={recipe.overrides.strength ?? 1}
+                  onChange={(e) => composer.setOverrides({ strength: Number(e.target.value) >= 1 ? undefined : Number(e.target.value) })}
+                  aria-label="重绘强度"
+                />
+                <p className="mt-1 text-[11px] text-fg-3">越小越像参考图（只改细节），1 = 按提示词大改</p>
+              </div>
+            )}
             {cap.negativePrompt ? (
               <div>
                 <p className="label">反向提示词</p>
@@ -545,7 +569,7 @@ export function ComposerPanel({
           </Popover>
 
           <Popover open={panel === 'ai'} onClose={() => setPanel(null)} className="right-0 w-56 !p-1.5">
-            {AI_ITEMS.map((item) => (
+            {AI_ITEMS.filter((item) => !item.videoOnly || mode === 'video').map((item) => (
               <button
                 key={item.kind}
                 onClick={() => void runAi(item.kind)}
@@ -556,6 +580,7 @@ export function ComposerPanel({
               </button>
             ))}
             {health && !health.llm && <p className="px-3 py-2 text-xs text-fg-3">语言模型未配置：只有“随机灵感”可用（离线词库）</p>}
+            {health?.llmMode === 'mock' && <p className="px-3 py-2 text-xs text-fg-3">当前是模拟写作助手：结果是固定句式，只用来走通流程</p>}
           </Popover>
 
           <Popover open={panel === 'preview'} onClose={() => setPanel(null)} className="right-0 w-[min(28rem,calc(100vw-2rem))] space-y-3 text-sm">

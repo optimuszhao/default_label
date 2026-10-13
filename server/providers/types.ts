@@ -18,6 +18,8 @@ export interface SubmitInput {
   negativePrompt: string;
   params: GenParams;
   images: ProviderImageInput[];
+  /** 用户锁定了种子（params.seed 是用户填的，不是调度器随机补的）：多张图要逐张可复现 */
+  seedLocked?: boolean;
 }
 
 export interface ProviderOutput {
@@ -28,7 +30,8 @@ export interface ProviderOutput {
   url?: string;
   base64?: string;
   /** 这个产物实际使用的种子 */
-  seed?: number;
+  /** 实际种子；null 表示无法复现（例如合并成一个任务出的第 2 张起） */
+  seed?: number | null;
   width?: number;
   height?: number;
 }
@@ -59,6 +62,10 @@ export interface OperatorSettings {
   /** 查询图片 / 视频任务进度的间隔（毫秒） */
   imagePollMs: number;
   videoPollMs: number;
+  /** 算子自带语言模型时用哪个模型（不填用对方默认） */
+  llmModel?: string;
+  /** 允许模型先"思考"再回答（更慢；默认关闭） */
+  llmThink?: boolean;
 }
 
 export interface OperatorContext {
@@ -90,6 +97,12 @@ export interface Provider {
   submit(input: SubmitInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<JobStatus>;
   cancel(jobId: string): Promise<void>;
+  /** 算子自带的语言模型（OpenAI 兼容对话）；没有时不实现 */
+  chat?(messages: ChatMessage[], options?: ChatOptions): Promise<string>;
+  /** 列出算子上可用的语言模型（用来判断有没有）；没有时不实现 */
+  llmModels?(): Promise<string[]>;
+  /** 一句场景描述 → 视频分镜提示词（算子的业务接口，按它的视频模型写法）；没有时不实现 */
+  storyboard?(scene: string, duration: number): Promise<string>;
   /** 需要令牌的算子：查看状态、立即校验、重新获取、清除、手动填入、查看明文 */
   tokenStatus?(): TokenStatus;
   verifyToken?(): Promise<TokenStatus>;

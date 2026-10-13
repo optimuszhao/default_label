@@ -25,7 +25,8 @@ test('comfyweb 声明的能力：单张参考图、无尾帧、视频原生尺�
   const caps = await user.get('/api/capabilities');
   assert.equal(caps.operator, 'comfyweb');
   assert.equal(caps.image.maxReferences, 1);
-  assert.equal(caps.image.strength, false);
+  assert.equal(caps.image.strength, true, '图生图支持重绘强度（denoise）');
+  assert.equal(caps.video.strength, false);
   assert.equal(caps.video.lastFrame, false);
   assert.equal(caps.video.negativePrompt, false);
   assert.deepEqual(caps.video.sizes.find((s: any) => s.aspectRatio === '16:9'), { aspectRatio: '16:9', width: 1344, height: 768 });
@@ -33,7 +34,7 @@ test('comfyweb 声明的能力：单张参考图、无尾帧、视频原生尺�
   assert.equal(anonymous.status, 401);
 });
 
-test('服务端兜底规整：多余参考图、强度、CFG 被去掉', async () => {
+test('服务端兜底规整：多余参考图、CFG 被去掉，重绘强度保留', async () => {
   const a = await upload(user);
   const b = await upload(user);
   const task = await user.post('/api/tasks', {
@@ -43,7 +44,7 @@ test('服务端兜底规整：多余参考图、强度、CFG 被去掉', async (
     inputs: { referenceAssetIds: [a, b] },
   });
   assert.deepEqual(task.inputs.referenceAssetIds, [a]);
-  assert.equal(task.params.strength, undefined);
+  assert.equal(task.params.strength, 0.5);
   assert.equal(task.params.cfg, undefined);
   assert.equal(task.params.count, 2);
 });

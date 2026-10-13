@@ -8,7 +8,7 @@ export const DEFAULT_KEYFRAME_NEGATIVE = '模糊，低质量，畸形，多余�
 export const DEFAULT_VIDEO_NEGATIVE = '画面闪烁，人物变形，低质量';
 export const PROMPT_LIMIT = 600;
 
-export type SegmentKind = 'style' | 'location' | 'camera' | 'description' | 'character' | 'prop' | 'extra' | 'dialogue' | 'override';
+export type SegmentKind = 'style' | 'location' | 'camera' | 'description' | 'character' | 'prop' | 'extra' | 'dialogue' | 'override' | 'storyboard';
 
 export interface PromptSegment {
   kind: SegmentKind;
@@ -30,6 +30,7 @@ export interface BuiltPrompt {
 const DROP_ORDER: SegmentKind[] = ['dialogue', 'prop', 'style', 'location', 'extra', 'character', 'camera'];
 
 export const SEGMENT_LABEL: Record<SegmentKind, string> = {
+  storyboard: 'AI 分镜（视频）',
   style: '画风',
   location: '地点',
   camera: '景别运镜',
@@ -98,6 +99,11 @@ export function buildShotPrompt(data: StoryData, scene: Scene, shot: Shot, optio
   if (shot.promptOverride?.trim()) {
     const text = shot.promptOverride.trim();
     return { segments: [{ kind: 'override', label: SEGMENT_LABEL.override, text }], prompt: text, negative, dropped: [], seed };
+  }
+  // 视频：写过 AI 分镜提示词（按算子视频模型的分镜写法，带时间段、运镜、光线）就直接用它
+  if (video && shot.storyboard?.trim()) {
+    const text = shot.storyboard.trim();
+    return { segments: [{ kind: 'storyboard', label: SEGMENT_LABEL.storyboard, text }], prompt: text, negative, dropped: [], seed };
   }
 
   const segments: PromptSegment[] = [];

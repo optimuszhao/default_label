@@ -7,7 +7,7 @@ import { publish } from '../bus.ts';
 import { db, newId, now, parseJson, type Row } from '../db.ts';
 import { indexAsset } from '../files.ts';
 import { assetUrl, toAssets } from '../repo.ts';
-import { addChain, cancelChain, listChains, planBatch, runBatch, type BatchRequest } from '../stories/batch.ts';
+import { addChain, cancelChain, listChains, planBatch, runBatch, storyboardTargets, type BatchRequest } from '../stories/batch.ts';
 import { ass, keyframeEntries, scriptMarkdown, scriptText, shotsCsv, srt } from '../stories/export.ts';
 import { migrateStory } from '../stories/migrate.ts';
 import { PassThrough } from 'node:stream';
@@ -429,13 +429,20 @@ export async function storyRoutes(api: FastifyInstance): Promise<void> {
         idle: z.boolean().optional(),
         resolution: z.string().max(10).optional(),
         dryRun: z.boolean().default(false),
+        /** 先用 AI 给要出视频、还没写过分镜的镜头写视频分镜提示词，写完再开始生成 */
+        storyboard: z.boolean().default(false),
       }),
       request.body,
       reply,
     );
     if (!body) return;
     const batch: BatchRequest = { scope: body.scope, content: body.content, mode: body.mode, idle: body.idle, resolution: body.resolution };
-    if (body.dryRun) return { plan: planBatch(id, uid(request), batch), created: 0 };
+    const storyboardShots = body.storyboard ? storyboardTargets(id, batch).length : 0;
+    if (body.dryRun) return { plan: planBatch(id, uid(request), batch), created: 0, storyboardShots };
+    if (storyboardShots) {
+      const jobId = enqueueJob('story-storyboard', { storyId: id, userId: uid(request), request: batch }, { userId: uid(request), dedupeKey: `storyboard:${id}` });
+      return { plan: planBatch(id, uid(request), batch), created: 0, storyboardShots, job: toJob(getJobRow(jobId)!) };
+    }
     try {
       return await runBatch(id, uid(request), batch);
     } catch (error) {

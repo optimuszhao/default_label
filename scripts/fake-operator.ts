@@ -42,6 +42,8 @@ interface Scenario {
   submitDelayMs: number;
   /** 视频产物用 ffmpeg 生成能解码的真实小视频（测截帧、拼接、成片时打开；需要本机有 ffmpeg） */
   realMedia: boolean;
+  /** 提供语言模型接口（/api/llm/…）：模拟朋友接口新增的对话、分镜扩写 */
+  llm: boolean;
 }
 
 const DEFAULT: Scenario = {
@@ -58,6 +60,7 @@ const DEFAULT: Scenario = {
   videoSizeMb: 1,
   submitDelayMs: 0,
   realMedia: false,
+  llm: false,
 };
 
 const realVideos = new Map<string, Buffer>();
@@ -90,6 +93,7 @@ interface FakeTask {
   createdAt: number;
   outcome: Scenario['outcome'];
   timing: Pick<Scenario, 'pendingMs' | 'runningMs' | 'postprocessingMs'>;
+  canceled?: boolean;
 }
 
 const APPID = process.env.FAKE_APPID ?? 'dev';
@@ -170,6 +174,7 @@ function stateOf(task: FakeTask): { status: string; stage: string } {
   const age = Date.now() - task.createdAt;
   const { pendingMs, runningMs, postprocessingMs } = task.timing;
   const video = task.type.includes('video');
+  if (task.canceled) return { status: 'failed', stage: '已取消' };
   if (age < pendingMs) return { status: 'pending', stage: '' };
   if (task.outcome === 'fail' && age >= pendingMs) return { status: 'failed', stage: '' };
   if (age < pendingMs + runningMs) return { status: 'running', stage: video ? '视频生成中' : '图片生成中' };
@@ -188,7 +193,7 @@ function taskJson(task: FakeTask) {
           files: [`api_video_${task.id}.mp4`],
           upscaled: task.outcome === 'no-upscale' ? [] : [`api_upscale_${task.id}.mp4`],
         }
-      : { category: 'image', files: [`api_image_${task.id}.png`] };
+      : { category: 'image', files: Array.from({ length: Math.max(1, Number(task.params.count) || 1) }, (_, i) => `api_image_${task.id}_${i + 1}.png`) };
     if (scenario.resultBase) {
       const category = result.category as string;
       for (const key of ['files', 'upscaled']) {
@@ -243,7 +248,7 @@ function parseMultipart(body: Buffer, contentType: string): { fields: Record<str
   return { fields, hasFile };
 }
 
-const NUMERIC = new Set(['width', 'height', 'steps', 'seed', 'duration']);
+const NUMERIC = new Set(['width', 'height', 'steps', 'seed', 'duration', 'count', 'denoise']);
 
 function authorized(req: http.IncomingMessage): boolean {
   const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
@@ -331,6 +336,34 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     });
     if (scenario.submitDelayMs) await new Promise((resolve) => setTimeout(resolve, scenario.submitDelayMs));
     return send(res, 200, { task_id: id, message: '任务已提交' });
+  }
+
+  const cancel = /^\/api\/tasks\/([^/]+)\/cancel$/.exec(pathname);
+  if (cancel && req.method === 'POST') {
+    const task = tasks.get(decodeURIComponent(cancel[1]));
+    if (!task) return send(res, 404, { detail: '任务不存在' });
+    const status = stateOf(task).status;
+    if (status === 'completed' || status === 'failed') return send(res, 400, { detail: '任务已结束' });
+    task.canceled = true;
+    requests.push({ path: pathname, params: {}, hasFile: false, at: Date.now() });
+    return send(res, 200, { message: '已取消' });
+  }
+
+  if (pathname.startsWith('/api/llm/')) {
+    if (!scenario.llm) return send(res, 404, { detail: 'Not Found' });
+    if (pathname === '/api/llm/models') return send(res, 200, { models: [{ name: 'fake-qwen:latest' }] });
+    const payload = JSON.parse(body.toString() || '{}') as { messages?: { role: string; content: string }[]; scene?: string; duration?: number };
+    requests.push({ path: pathname, params: payload as Record<string, unknown>, hasFile: false, at: Date.now() });
+    if (pathname === '/api/llm/expand-prompt') {
+      return send(res, 200, { model: 'fake-qwen', duration: payload.duration ?? 5, prompt: `【算子分镜】${payload.scene ?? ''}\n[0s-2.5s] 镜头一：全景推进\n[2.5s-5s] 镜头二：近景` });
+    }
+    if (pathname === '/api/llm/v1/chat/completions') {
+      // 回一个能解析的 JSON：把用户输入里"输入："之后的内容带回来，方便测试确认走了真模型
+      const last = payload.messages?.at(-1)?.content ?? '';
+      const content = `<think></think>${JSON.stringify({ prompt: `【算子模型】${last.slice(0, 80)}`, ideas: ['算子灵感一', '算子灵感二'] })}`;
+      return send(res, 200, { id: 'chatcmpl-fake', object: 'chat.completion', model: 'fake-qwen', choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }] });
+    }
+    return send(res, 404, { detail: 'Not Found' });
   }
 
   const one = /^\/api\/tasks\/([^/]+)$/.exec(pathname);

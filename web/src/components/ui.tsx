@@ -266,9 +266,11 @@ export function HealthPills({ compact }: { compact?: boolean }) {
     <div className="flex flex-wrap items-center gap-1.5" title={health?.message}>
       {items.map((item) => {
         const ok = health?.[item.key];
+        const mock = item.key === 'llm' && health?.llmMode === 'mock';
         return (
           <span
             key={item.key}
+            title={mock ? '模拟写作助手：没有接真实语言模型，结果是固定句式' : undefined}
             className={cx(
               'inline-flex h-6 items-center gap-1.5 rounded-full border border-line px-2 text-[11px] text-fg-2',
               compact && 'px-1.5',
@@ -277,10 +279,11 @@ export function HealthPills({ compact }: { compact?: boolean }) {
             <span
               className={cx(
                 'size-1.5 rounded-full',
-                health == null ? 'bg-fg-3' : ok ? 'bg-ok shadow-[0_0_8px] shadow-ok' : 'bg-danger',
+                health == null ? 'bg-fg-3' : mock ? 'bg-warn' : ok ? 'bg-ok shadow-[0_0_8px] shadow-ok' : 'bg-danger',
               )}
             />
             {item.label}
+            {mock && !compact && <span className="text-fg-3">（模拟）</span>}
           </span>
         );
       })}

@@ -333,6 +333,8 @@ export interface ProviderHealth {
   image: boolean;
   video: boolean;
   llm: boolean;
+  /** 文案模型来自哪里：api 单独配置的接口 / operator 算子自带 / mock 模拟写作助手 */
+  llmMode?: 'api' | 'operator' | 'mock' | null;
   checkedAt: number;
   message?: string;
 }
@@ -432,6 +434,8 @@ export interface Shot {
   trimIn?: number;
   trimOut?: number;
   transition?: 'cut' | 'fade';
+  /** AI 写的视频分镜提示词（按时间段写镜头、运镜、光线；有它时视频直接用它） */
+  storyboard?: string;
 }
 
 export interface Scene {
@@ -523,9 +527,10 @@ export type AssistKind =
   | 'recap' // 章节前情提要
   | 'extract' // 从剧本里提取角色、地点、道具
   | 'split' // 把原著长文拆成章节
-  | 'split_shots'; // 一句话拆成几个镜头（工作流用）
+  | 'split_shots' // 一句话拆成几个镜头（工作流用）
+  | 'storyboard'; // 一句场景描述写成视频分镜提示词（按时间段写镜头、运镜、光线）
 
-export const ASSIST_KINDS: AssistKind[] = ['polish', 'outline', 'characters', 'chapters', 'dialogue', 'shots', 'expand', 'translate', 'variants', 'fill', 'motion', 'inspire', 'recap', 'extract', 'split', 'split_shots'];
+export const ASSIST_KINDS: AssistKind[] = ['polish', 'outline', 'characters', 'chapters', 'dialogue', 'shots', 'expand', 'translate', 'variants', 'fill', 'motion', 'inspire', 'recap', 'extract', 'split', 'split_shots', 'storyboard'];
 
 export type ServerEvent =
   | { type: 'task'; task: Task }

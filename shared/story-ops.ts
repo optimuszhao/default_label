@@ -50,6 +50,7 @@ export const ENTITY_FIELDS = {
     'trimIn',
     'trimOut',
     'transition',
+    'storyboard',
   ],
 } as const satisfies Record<Exclude<StoryEntity, 'story'>, readonly string[]>;
 

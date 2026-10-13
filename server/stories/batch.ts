@@ -6,12 +6,13 @@
 //   "接续上一镜尾帧"：上一镜的视频也在这次批量里（或正在生成）时，这一镜先记一条接续等待（story_chains），
 //   上一镜视频成功后截尾帧再建这一镜的视频任务，一镜接一镜串下去；接续的镜头在"先关键帧再视频"里不出关键帧。
 import type { Shot, StoryData, Task } from '../../shared/types.ts';
-import { buildShotTask, estimateSeconds, type ShotTaskInput } from '../../shared/story-prompt.ts';
+import { buildShotPrompt, buildShotTask, estimateSeconds, type ShotTaskInput } from '../../shared/story-prompt.ts';
 import { config } from '../config.ts';
 import { db, newId, now, parseJson, type Row } from '../db.ts';
 import { frameFromAsset } from '../library/frame.ts';
 import { logger } from '../log.ts';
 import { hasFfmpeg } from '../media/ffmpeg.ts';
+import { registerJobKind } from '../jobs/runner.ts';
 import { capabilities } from '../providers/index.ts';
 import { onTaskSettled } from '../scheduler.ts';
 import { createTasks, type TaskOrigin } from '../tasks/create.ts';
@@ -418,4 +419,58 @@ export function startStoryChains(): () => void {
     off();
     clearInterval(timer);
   };
+}
+
+// ---------------- 批量前先用 AI 写视频分镜提示词 ----------------
+
+/** 这次批量里要出视频、还没写过 AI 分镜的镜头（手写了完整提示词的不动） */
+export function storyboardTargets(storyId: string, request: BatchRequest): ShotRef[] {
+  if (request.content === 'keyframe') return [];
+  const { data } = loadStory(storyId);
+  const media = request.mode === 'missing' ? effectiveMedia(storyId) : null;
+  return shotsInScope(data, request.scope).filter(
+    (ref) =>
+      !ref.shot.locked &&
+      !ref.shot.promptOverride?.trim() &&
+      !ref.shot.storyboard?.trim() &&
+      ref.shot.description.trim() &&
+      !(media && media.get(ref.shot.id)?.video),
+  );
+}
+
+export function registerStoryboardJob(): void {
+  registerJobKind<{ storyId: string; userId: string; request: BatchRequest }>('story-storyboard', {
+    maxAttempts: 1,
+    handler: async (ctx) => {
+      const { storyId, userId, request } = ctx.payload;
+      const { runAssist } = await import('../assist.ts');
+      const { commitOps } = await import('../routes/stories.ts');
+      const targets = storyboardTargets(storyId, request);
+      let written = 0;
+      let failed = 0;
+      for (const [index, ref] of targets.entries()) {
+        if (ctx.signal.aborted) return { written, failed, created: 0, canceled: true };
+        ctx.progress(index / Math.max(1, targets.length), `写分镜 ${index + 1}/${targets.length}`);
+        try {
+          // 用自动拼好的视频提示词当"场景"（带上了角色外貌、地点、景别运镜）
+          const { data } = loadStory(storyId);
+          const fresh = shotsInScope(data, { type: 'shots', ids: [ref.shot.id] })[0];
+          if (!fresh || fresh.shot.storyboard?.trim()) continue;
+          const scene = buildShotPrompt(data, fresh.scene, fresh.shot, { purpose: 'video' }).prompt;
+          const result = await runAssist('storyboard', { scene, duration: fresh.shot.duration || 5 });
+          const prompt = typeof result.prompt === 'string' ? result.prompt.trim() : '';
+          if (!prompt) throw new Error('没有返回内容');
+          commitOps(storyId, userId, [{ op: 'set', entity: 'shot', id: fresh.shot.id, patch: { storyboard: prompt.slice(0, 4000) } }], null);
+          written++;
+        } catch (error) {
+          // 写不出来的镜头照常用自动拼的提示词
+          failed++;
+          logger.warn({ err: error, shotId: ref.shot.id }, '批量：AI 写分镜失败，改用自动提示词');
+        }
+      }
+      ctx.progress(1, '开始生成');
+      const result = await runBatch(storyId, userId, request);
+      return { written, failed, created: result.created, chained: result.plan.chained.length };
+    },
+  });
 }

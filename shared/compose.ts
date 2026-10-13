@@ -190,6 +190,7 @@ export function compose({ recipe, template, catalog, caps }: ComposeInput): Comp
     seed: o.seed ?? null,
   };
   if (cap.steps && o.steps) params.steps = o.steps;
+  if (cap.strength && o.strength != null) params.strength = o.strength;
   if (mode === 'video') {
     params.duration = clampDuration(cap, merged.duration);
     if (params.duration !== merged.duration) warnings.push(`时长已调整为 ${params.duration} 秒（算子支持 ${cap.durations.join('/')} 秒）`);

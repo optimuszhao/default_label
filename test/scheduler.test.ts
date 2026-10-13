@@ -36,22 +36,32 @@ function peakRssMb(pid: number): number {
 
 describe('种子', () => {
   test('不指定种子：服务端生成随机种子，不再提交 0，并记录到资产', async () => {
+    // 没锁种子的多张图合成一个上游任务：第 1 张记下提交的种子，第 2 张起种子未知（对方合并出图不是 种子+n）
     const first = await user.post('/api/tasks', { type: 't2i', prompt: '种子', params: { ...IMAGE_PARAMS, count: 3 } });
     const done = await waitStatus(user, first.id, ['succeeded', 'failed']);
     assert.equal(done.status, 'succeeded', done.lastError);
     const sent = (await h.operatorRequests()).map((r) => r.params.seed as number);
-    assert.equal(sent.length, 3);
-    assert.ok(sent.every((seed) => seed > 0), `提交的种子：${sent}`);
-    assert.deepEqual(sent, [sent[0], sent[0] + 1, sent[0] + 2]);
+    assert.equal(sent.length, 1);
+    assert.ok(sent[0] > 0, `提交的种子：${sent}`);
     const assets = await user.get<any[]>('/api/assets');
     const seeds = done.outputAssetIds.map((id: string) => assets.find((a) => a.id === id).gen.seed);
-    assert.deepEqual(seeds, sent);
+    assert.deepEqual(seeds, [sent[0], null, null]);
 
     // 再来一次：换一个新种子
     const again = await user.post(`/api/tasks/${first.id}/retry`);
     await waitStatus(user, again.id, ['succeeded']);
-    const second = (await h.operatorRequests()).slice(3).map((r) => r.params.seed);
+    const second = (await h.operatorRequests()).slice(1).map((r) => r.params.seed);
     assert.notEqual(second[0], sent[0]);
+  });
+
+  test('锁定种子的多张图：拆成多个上游任务，第 n 张用 种子+n，每张都记下种子', async () => {
+    const mark = (await h.operatorRequests()).length;
+    const t = await user.post('/api/tasks', { type: 't2i', prompt: '锁种子', params: { ...IMAGE_PARAMS, count: 3, seed: 500 } });
+    const done = await waitStatus(user, t.id, ['succeeded', 'failed']);
+    assert.equal(done.status, 'succeeded', done.lastError);
+    assert.deepEqual((await h.operatorRequests()).slice(mark).map((r) => r.params.seed), [500, 501, 502]);
+    const assets = await user.get<any[]>('/api/assets');
+    assert.deepEqual(done.outputAssetIds.map((id: string) => assets.find((a) => a.id === id).gen.seed), [500, 501, 502]);
   });
 
   test('指定种子时原样提交', async () => {

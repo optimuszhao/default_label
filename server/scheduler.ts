@@ -162,7 +162,7 @@ async function complete(task: Task, outputs: ProviderOutput[], runSeed: number |
   try {
     for (const [index, output] of outputs.entries()) {
       // 多张图按顺序对应种子 base、base+1……（和提交时的拆分一致）
-      const seed = output.seed ?? (runSeed == null ? null : output.kind === 'image' ? runSeed + index : runSeed);
+      const seed = output.seed !== undefined ? output.seed : runSeed == null ? null : output.kind === 'image' ? runSeed + index : runSeed;
       const asset = await saveAsset({
         userId,
         kind: output.kind,
@@ -339,6 +339,7 @@ async function dispatch(): Promise<void> {
         negativePrompt: task.negativePrompt,
         params: { ...task.params, seed },
         images,
+        seedLocked: task.params.seed != null,
       });
       // 提交期间用户可能取消、暂停或删除了任务：只有仍在排队时才改成运行中
       const changed = update(

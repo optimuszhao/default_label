@@ -1,6 +1,6 @@
 // 批量生成：选内容和模式，先让服务端试算（任务数、跳过多少、GPU 时长、预计完成时间），确认后提交
 import { useEffect, useState } from 'react';
-import { Moon } from 'lucide-react';
+import { Clapperboard, Moon } from 'lucide-react';
 import { Button, Modal, Segmented, Spinner, Toggle } from '../../../components/ui.tsx';
 import { api, request } from '../../../lib/api.ts';
 import { reportError, useStore } from '../../../lib/store.ts';
@@ -46,6 +46,8 @@ export function BatchDialog() {
   const [content, setContent] = useState<Content>(initial);
   const [mode, setMode] = useState<Mode>('missing');
   const [idle, setIdle] = useState(false);
+  const [storyboard, setStoryboard] = useState(false);
+  const [storyboardShots, setStoryboardShots] = useState(0);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -54,6 +56,7 @@ export function BatchDialog() {
       setContent(initial);
       setMode('missing');
       setIdle(false);
+      setStoryboard(false);
     }
   }, [scope, initial]);
 
@@ -64,8 +67,11 @@ export function BatchDialog() {
     void (async () => {
       try {
         await flushNow?.();
-        const result = await request<{ plan: Plan }>('POST', `/api/stories/${storyId}/generate`, { scope, content, mode, idle, dryRun: true });
-        if (alive) setPlan(result.plan);
+        const result = await request<{ plan: Plan; storyboardShots: number }>('POST', `/api/stories/${storyId}/generate`, { scope, content, mode, idle, storyboard: storyboard && content !== 'keyframe', dryRun: true });
+        if (alive) {
+          setPlan(result.plan);
+          setStoryboardShots(result.storyboardShots ?? 0);
+        }
       } catch (error) {
         if (alive) reportError(error);
       }
@@ -73,14 +79,25 @@ export function BatchDialog() {
     return () => {
       alive = false;
     };
-  }, [scope, content, mode, idle, storyId, flushNow]);
+  }, [scope, content, mode, idle, storyboard, storyId, flushNow]);
 
   async function submit() {
     if (!scope) return;
     setBusy(true);
     try {
       await flushNow?.();
-      const result = await request<{ created: number; plan: Plan }>('POST', `/api/stories/${storyId}/generate`, { scope, content, mode, idle });
+      const result = await request<{ created: number; plan: Plan; storyboardShots?: number; job?: { id: string } }>('POST', `/api/stories/${storyId}/generate`, {
+        scope,
+        content,
+        mode,
+        idle,
+        storyboard: storyboard && content !== 'keyframe',
+      });
+      if (result.job) {
+        toast(`正在用 AI 给 ${result.storyboardShots} 个镜头写视频分镜，写完自动开始生成`, 'success');
+        close();
+        return;
+      }
       upsertTasks(await api.tasks({ storyId, limit: 1000 }));
       const later = result.plan.followUps ? `，另有 ${result.plan.followUps} 个视频会在关键帧完成后自动加入` : '';
       const chained = result.plan.chained.length ? `，${result.plan.chained.length} 个镜头会接续上一镜依次生成` : '';
@@ -131,6 +148,15 @@ export function BatchDialog() {
           </span>
           <Toggle checked={idle} onChange={setIdle} label="闲时生成" />
         </label>
+        {content !== 'keyframe' && (
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2.5 text-sm">
+            <span className="flex items-center gap-2">
+              <Clapperboard className="size-4 text-fg-3" /> 先用 AI 写视频分镜
+              <span className="text-xs text-fg-3">（按时间段写镜头、运镜、光线；已写过的不重写）</span>
+            </span>
+            <Toggle checked={storyboard} onChange={setStoryboard} label="先用 AI 写视频分镜" />
+          </label>
+        )}
 
         <div className="rounded-lg bg-white/[0.04] p-3 text-[13px]">
           {!plan ? (
@@ -147,6 +173,11 @@ export function BatchDialog() {
               {plan.chained.length > 0 && (
                 <p className="text-fg-3">
                   接续的镜头要等上一镜视频完成、截好尾帧才开始，只能一段接一段地生成（最长一串 {plan.chainLongest} 段），总耗时会比并行长。
+                </p>
+              )}
+              {storyboard && content !== 'keyframe' && (
+                <p className="text-fg-3">
+                  {storyboardShots > 0 ? `先给 ${storyboardShots} 个镜头写视频分镜（每个约 5–10 秒），写完自动开始生成。` : '这些镜头都已经有视频分镜了，直接开始生成。'}
                 </p>
               )}
               {plan.relayNoFfmpeg > 0 && <p className="text-warn">服务器没有 ffmpeg，截不了尾帧：{plan.relayNoFfmpeg} 个设了接续的镜头会改用自己的关键帧。</p>}

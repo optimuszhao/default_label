@@ -1,10 +1,10 @@
 // AI 创作助手：提示词润色、故事大纲、角色、章节场次、台词、分镜。
-// http 模式下调用同事提供的 LLM 接口（要求返回 JSON）；mock 模式下返回模板化的示例，
-// 方便在没有大模型的情况下把整个创作流程走通。
+// 语言模型按顺序选：单独配置的 LLM_API_BASE → 算子自带的语言模型（朋友接口 /api/llm/…）→ 模拟写作助手。
+// 模拟写作助手返回模板化的示例，只用来在没有大模型时把流程走通。
 import { OFFLINE_IDEAS } from '../shared/seed.ts';
 import type { AssistKind } from '../shared/types.ts';
-import { openAiChat } from './providers/llm.ts';
-import { useMockAssist } from './providers/index.ts';
+import { assistBackend, chat, operatorStoryboard } from './providers/index.ts';
+import { ProviderUnavailableError } from './providers/types.ts';
 
 type Dict = Record<string, unknown>;
 
@@ -73,6 +73,10 @@ function buildPrompt(kind: AssistKind, input: Dict): string {
       return `把下面的原著长文拆成 ${input.chapterCount ?? '合适数量的'} 个章节。每章给出标题、梗概（100~200 字），以及这一章在原文中开头的一句话（firstSentence，必须原样摘自原文）。
 输入：${json}
 输出格式：{"chapters": [{"title": "", "summary": "", "firstSentence": ""}]}`;
+    case 'storyboard':
+      return `把这个场景写成一段 ${input.duration ?? 5} 秒视频的分镜提示词，直接用于 AI 视频生成。先一句话写风格和剧情，再按时间段写分镜（例如 [0s-2.5s] 镜头一：景别、运镜、主体动作、光线；[2.5s-5s] 镜头二：……），最后写整体色调与质感。中文，不要字幕水印。
+输入：${json}
+输出格式：{"prompt": "完整的分镜提示词"}`;
     case 'split_shots':
       return `把这个想法拆成 ${input.count ?? 4} 个连贯的镜头，组成一个短片。每个镜头写画面描述（可直接用于 AI 绘图）和动作描述（可直接用于图生视频），时长 4~8 秒。
 输入：${json}
@@ -109,7 +113,16 @@ function clip(kind: AssistKind, input: Dict): Dict {
 
 export async function runAssist(kind: AssistKind, rawInput: Dict): Promise<Dict> {
   const input = clip(kind, rawInput);
-  if (useMockAssist()) return mockAssist(kind, input);
+  const backend = await assistBackend();
+  if (backend.kind === 'mock') return mockAssist(kind, input);
+  if (backend.kind === 'none') throw new ProviderUnavailableError('未配置语言模型，AI 写作助手不可用');
+  // 分镜：算子有专门的分镜扩写接口（按它的视频模型写法）就用它
+  if (kind === 'storyboard') {
+    const scene = str(input.scene);
+    if (!scene) throw new Error('缺少场景描述');
+    const prompt = await operatorStoryboard(scene, Number(input.duration) || 5);
+    if (prompt) return { prompt };
+  }
   if (kind === 'translate' && typeof input.prompt === 'string') {
     // 变量保护：翻译前把 {变量} 换成占位符，翻译后换回来，防止模型改动
     const vars: string[] = [];
@@ -118,7 +131,7 @@ export async function runAssist(kind: AssistKind, rawInput: Dict): Promise<Dict>
     const text = str(result.prompt).replace(/\[\[V(\d+)\]\]/g, (_, index: string) => vars[Number(index)] ?? '');
     return { prompt: text };
   }
-  const content = await openAiChat(
+  const content = await chat(
     [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: buildPrompt((kind as string) === 'translate-raw' ? 'translate' : kind, input) },
@@ -286,6 +299,14 @@ function mockAssist(kind: AssistKind, input: Dict): Dict {
           const chunk = parts.slice(i * per, (i + 1) * per).join('\n');
           return { title: `第${i + 1}章`, summary: chunk.slice(0, 120), firstSentence: chunk.split(/[。！？\n]/)[0] ?? '' };
         }),
+      };
+    }
+    case 'storyboard': {
+      const scene = str(input.scene, '雨夜街头的少女');
+      const duration = Number(input.duration) || 5;
+      const half = Math.round((duration / 2) * 10) / 10;
+      return {
+        prompt: `电影级写实风格。剧情：${scene}。\n\n分镜：\n[0s-${half}s] 镜头一：全景，镜头缓慢推进，交代环境与人物位置，柔和侧逆光。\n[${half}s-${duration}s] 镜头二：切到人物中近景，浅景深，人物动作与情绪特写，背景虚化。\n\n风格：电影感色调，细节丰富，无文字字幕水印。`,
       };
     }
     case 'split_shots': {

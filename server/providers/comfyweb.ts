@@ -10,6 +10,9 @@
 //   查询任务    GET  /api/tasks/{task_id}       {status, stage, result:{category, files, upscaled}, error}
 //               status: pending → running → postprocessing（转码 / 超分）→ completed / failed
 //   下载产物    GET  /api/products/download/{video|image}/{filename}
+//   取消任务    POST /api/tasks/{task_id}/cancel     排队中的从队列删掉，执行中的直接中断；已结束返回 400
+//   语言模型    POST /api/llm/v1/chat/completions    OpenAI 兼容；GET /api/llm/models 列出模型
+//   分镜扩写    POST /api/llm/expand-prompt          {scene, duration} → {prompt}（按对方视频模型的分镜写法）
 //
 // 对方可以同时接收多个任务，在 ComfyUI 内部排队；视频含超分单条约 15–30 分钟。
 // 遇到认不出的响应会把原文打到日志里（npm run probe:comfy 可以直接看原始返回）。
@@ -25,6 +28,8 @@ import { newTempFile } from '../files.ts';
 import { logger } from '../log.ts';
 import {
   ProviderUnavailableError,
+  type ChatMessage,
+  type ChatOptions,
   type JobStatus,
   type OperatorContext,
   type OperatorHealth,
@@ -64,6 +69,11 @@ function jwtExpiry(value: string): number | null {
   } catch {
     return null;
   }
+}
+
+/** 去掉模型输出里的思考过程（<think>…</think>） */
+function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
 function errorText(data: unknown): string | null {
@@ -213,7 +223,8 @@ const COMFYWEB_CAPABILITIES: Capabilities = {
   image: {
     ...DEFAULT_CAPABILITIES.image,
     maxReferences: 1,
-    strength: false,
+    // 图生图 denoise：越小越贴近参考图
+    strength: true,
     cfg: false,
     resolutions: IMAGE_RESOLUTIONS,
     sizeStep: 16,
@@ -423,7 +434,11 @@ export class ComfyWebProvider implements Provider {
   }
 
   private async callJson(method: string, pathname: string, body?: BodyInit, json = true): Promise<Json> {
-    const response = await this.call(method, pathname, body, json);
+    return this.callJsonTimeout(method, pathname, body, 60_000, json);
+  }
+
+  private async callJsonTimeout(method: string, pathname: string, body: BodyInit | undefined, timeoutMs: number, json = true): Promise<Json> {
+    const response = await this.call(method, pathname, body, json, timeoutMs);
     const text = await response.text();
     let data: unknown = {};
     try {
@@ -437,7 +452,7 @@ export class ComfyWebProvider implements Provider {
 
   // ---------------- 提交 ----------------
 
-  private async submitOne(input: SubmitInput, seedOffset: number): Promise<string> {
+  private async submitOne(input: SubmitInput, seedOffset: number, count = 1): Promise<string> {
     const seed = input.params.seed == null ? 0 : input.params.seed + seedOffset;
     let data: Json;
     switch (input.type) {
@@ -452,6 +467,7 @@ export class ComfyWebProvider implements Provider {
             height: round(input.params.height, 16),
             steps: input.params.steps ?? 25,
             seed,
+            count,
           }),
         );
         break;
@@ -466,6 +482,8 @@ export class ComfyWebProvider implements Provider {
         form.append('height', String(round(input.params.height, 16)));
         form.append('steps', String(input.params.steps ?? 25));
         form.append('seed', String(seed));
+        form.append('count', String(count));
+        if (input.params.strength != null) form.append('denoise', String(Math.min(1, Math.max(0.05, input.params.strength))));
         data = await this.callJson('POST', '/api/generate/img2img', form, false);
         break;
       }
@@ -625,11 +643,13 @@ export class ComfyWebProvider implements Provider {
   }
 
   async submit(input: SubmitInput) {
-    // 对方每次只出一个结果；多张图拆成多个任务，任务号用逗号拼起来
     const count = input.type === 't2i' || input.type === 'i2i' ? Math.min(Math.max(input.params.count || 1, 1), 4) : 1;
+    const kind = input.type.endsWith('v') ? 'video' : 'image';
+    // 没锁种子：多张图合成一个任务提交（对方一次最多 16 张，少排几次队）；
+    // 锁定了种子：拆成多个任务，第 n 张用 种子+n，每张都能复现（对方合并出图时第 2 张起不是 种子+n，实测无法复现）
+    if (count > 1 && !input.seedLocked) return { jobId: `${kind}:${await this.submitOne(input, 0, count)}` };
     const ids: string[] = [];
     for (let index = 0; index < count; index++) ids.push(await this.submitOne(input, index));
-    const kind = input.type.endsWith('v') ? 'video' : 'image';
     return { jobId: `${kind}:${ids.join(',')}` };
   }
 
@@ -653,6 +673,8 @@ export class ComfyWebProvider implements Provider {
         await Promise.all(outputs.map((output) => output.filePath && fs.rm(output.filePath, { force: true })));
         throw error;
       }
+      // 一个对方任务出了多张图（合并提交）：第 1 张就是提交的种子，第 2 张起种子未知
+      if (ids.length === 1 && outputs.length > 1) outputs.forEach((output, index) => index > 0 && (output.seed = null));
       return { state: 'succeeded', progress: 1, outputs };
     }
     const progress = jobs.reduce((sum, job) => sum + job.progress, 0) / jobs.length;
@@ -662,8 +684,54 @@ export class ComfyWebProvider implements Provider {
     return { state: jobs.some((job) => job.state === 'running') ? 'running' : 'pending', progress, stage };
   }
 
-  async cancel() {
-    // 对方没有取消接口：织影这边标记取消即可，生成结果会被忽略
+  /** 取消：对方队列里排着的删掉、正在跑的中断，显卡立即空出来；已结束的任务对方返回 400，忽略即可 */
+  async cancel(jobId: string) {
+    const { ids } = parseJobId(jobId);
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const response = await this.call('POST', `/api/tasks/${encodeURIComponent(id)}/cancel`, undefined, true, 15_000);
+          if (!response.ok && response.status !== 400 && response.status !== 404) logger.warn({ operator: this.ctx.id, id, status: response.status }, '取消对方任务失败');
+        } catch (error) {
+          logger.warn({ err: error, operator: this.ctx.id, id }, '取消对方任务失败');
+        }
+      }),
+    );
+  }
+
+  // ---------------- 语言模型 ----------------
+
+  async llmModels(): Promise<string[]> {
+    const response = await this.call('GET', '/api/llm/models', undefined, true, 10_000);
+    if (!response.ok) return [];
+    const data = (await response.json().catch(() => ({}))) as { models?: { name?: string }[] };
+    return (data.models ?? []).map((model) => String(model.name ?? '')).filter(Boolean);
+  }
+
+  async chat(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
+    // Qwen3 一类模型默认先"思考"一大段再回答；写文案不需要，关掉能快好几倍
+    const think = this.ctx.settings.llmThink === true;
+    const list = think ? messages : messages.map((message, index) => (index === messages.length - 1 && message.role === 'user' ? { ...message, content: `${message.content}\n/no_think` } : message));
+    const response = await this.call(
+      'POST',
+      '/api/llm/v1/chat/completions',
+      JSON.stringify({ ...(this.ctx.settings.llmModel ? { model: this.ctx.settings.llmModel } : {}), messages: list, temperature: options.temperature ?? 0.8, stream: false }),
+      true,
+      180_000,
+    );
+    const text = await response.text();
+    if (!response.ok) throw new Error(`语言模型返回错误（HTTP ${response.status}）：${text.slice(0, 300)}`);
+    const data = JSON.parse(text) as { choices?: { message?: { content?: string } }[] };
+    const content = data.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') throw new Error('语言模型没有返回内容');
+    return stripThinking(content);
+  }
+
+  async storyboard(scene: string, duration: number): Promise<string> {
+    const data = await this.callJsonTimeout('POST', '/api/llm/expand-prompt', JSON.stringify({ scene, duration: Math.min(15, Math.max(4, duration)), ...(this.ctx.settings.llmModel ? { model: this.ctx.settings.llmModel } : {}) }), 180_000);
+    const prompt = typeof data.prompt === 'string' ? stripThinking(data.prompt) : '';
+    if (!prompt) throw new Error('分镜扩写没有返回内容');
+    return prompt;
   }
 
   // ---------------- 后台：令牌管理 ----------------

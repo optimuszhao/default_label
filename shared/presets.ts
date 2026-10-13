@@ -96,6 +96,8 @@ export interface Recipe {
     duration?: number;
     seed?: number | null;
     steps?: number;
+    /** 图生图重绘强度 0–1：越小越贴近参考图 */
+    strength?: number;
     cameraMotion?: string;
   };
   /** 派生来源（变体、以此为参考、图转视频） */

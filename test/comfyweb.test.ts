@@ -36,12 +36,14 @@ describe('comfyweb', () => {
     assert.equal(file.status, 200);
   });
 
-  test('一次出 3 张图：拆成 3 个上游任务，得到 3 个资产', async () => {
+  test('一次出 3 张图（没锁种子）：合成 1 个上游任务（count=3），得到 3 个资产', async () => {
     const task = await user.post('/api/tasks', { type: 't2i', prompt: '多张', params: { ...IMAGE_PARAMS, count: 3 } });
     const done = await waitTask(task.id, ['succeeded', 'failed']);
     assert.equal(done.status, 'succeeded', done.lastError);
     assert.equal(done.outputAssetIds.length, 3);
-    assert.equal((await h.operatorRequests()).length, 3);
+    const sent = await h.operatorRequests();
+    assert.equal(sent.length, 1);
+    assert.equal((sent[0] as any).params.count, 3);
   });
 
   test('文生视频：只下载超分版，显示上游阶段', async () => {

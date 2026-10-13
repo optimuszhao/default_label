@@ -156,7 +156,7 @@ export function loadStory(storyId: string): LoadedStory {
     if (elementIds.length) shot.elementIds = elementIds;
     if (Number(row.locked) === 1) shot.locked = true;
     if (row.review) shot.review = row.review as Shot['review'];
-    for (const field of ['seed', 'extraPrompt', 'negative', 'promptOverride', 'firstFrame', 'trimIn', 'trimOut', 'transition'] as const) {
+    for (const field of ['seed', 'extraPrompt', 'negative', 'promptOverride', 'firstFrame', 'trimIn', 'trimOut', 'transition', 'storyboard'] as const) {
       if (data[field] !== undefined && data[field] !== null) (shot as unknown as Record<string, unknown>)[field] = data[field];
     }
     const list = shotsByScene.get(String(row.scene_id)) ?? [];
@@ -332,7 +332,7 @@ function insertLine(storyId: string, sceneId: string, item: Record<string, unkno
   );
 }
 
-const SHOT_DATA_FIELDS = ['dialogueIds', 'seed', 'extraPrompt', 'negative', 'promptOverride', 'firstFrame', 'trimIn', 'trimOut', 'transition'] as const;
+const SHOT_DATA_FIELDS = ['dialogueIds', 'seed', 'extraPrompt', 'negative', 'promptOverride', 'firstFrame', 'trimIn', 'trimOut', 'transition', 'storyboard'] as const;
 
 function insertShot(storyId: string, sceneId: string, item: Record<string, unknown>, sortKey: string): void {
   const ts = now();

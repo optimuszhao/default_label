@@ -1,6 +1,6 @@
 {
   "name": "weave-studio",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "private": true,
   "description": "织影 Weave —— AI 文生图 / 图生图 / 文生视频 / 图生视频 / 长篇故事创作工作台",
   "type": "module",
