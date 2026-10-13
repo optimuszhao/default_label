@@ -72,6 +72,27 @@ export function stepDone(id: StepInfo['id'], data: StoryData, stats: StoryStats)
   }
 }
 
+/** 步骤条上每一步下面的小字：这一步做到哪了 */
+export function stepProgress(id: StepInfo['id'], data: StoryData, stats: StoryStats): string {
+  const scenes = data.chapters.flatMap((c) => c.scenes);
+  switch (id) {
+    case 'setup':
+      return data.outline.trim() ? '大纲已写' : data.logline.trim() ? '待扩写大纲' : '从一句话开始';
+    case 'characters':
+      return data.characters.length || data.elements?.length ? `${data.characters.length} 个角色${data.elements?.length ? ` · ${data.elements.length} 个设定` : ''}` : '还没有角色';
+    case 'structure':
+      return scenes.length ? `${stats.chapters} 章 · ${scenes.length} 场` : '还没有场次';
+    case 'script':
+      return scenes.length ? `${scenes.filter((s) => s.summary.trim() || s.dialogue.length).length}/${scenes.length} 场` : '—';
+    case 'shots':
+      return scenes.length ? `${stats.shots} 镜 · ${scenes.filter((s) => s.shots.length).length}/${scenes.length} 场` : '—';
+    case 'preview':
+      return stats.shots ? `视频 ${stats.videos}/${stats.shots}` : '—';
+    case 'layout':
+      return '绘本 · 漫画';
+  }
+}
+
 /** 第一个还没完成的步骤，用于“继续创作”引导 */
 export function nextStep(data: StoryData, stats: StoryStats, steps: StepInfo[] = STEPS): StepInfo | null {
   return steps.find((step) => !stepDone(step.id, data, stats)) ?? null;

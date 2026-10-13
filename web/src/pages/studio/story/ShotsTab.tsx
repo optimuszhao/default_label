@@ -10,12 +10,14 @@ import {
   Link2,
   Lock,
   LockOpen,
+  MessageSquareWarning,
   Plus,
   SlidersHorizontal,
   Sparkles,
   ThumbsDown,
   Trash2,
   Wand2,
+  X,
 } from 'lucide-react';
 import { maxDuration } from '../../../../../shared/operator.ts';
 import { buildShotPrompt, findMentions, SEGMENT_LABEL, type PromptSegment } from '../../../../../shared/story-prompt.ts';
@@ -164,6 +166,128 @@ export function PromptPreview({ data, scene, shot }: { data: StoryData; scene: S
   );
 }
 
+/** 镜头编号：手填的编号优先，否则按场内顺序 #01 */
+export const shotLabel = (shot: Shot, index: number) => `#${shot.code || String(index + 1).padStart(2, '0')}`;
+
+/** 按剧本里的顺序排列台词 id（不管点选的先后） */
+const inSceneOrder = (scene: Scene, ids: string[]) => scene.dialogue.filter((line) => ids.includes(line.id)).map((line) => line.id);
+
+function speakerName(data: StoryData, characterId: string | null) {
+  return data.characters.find((c) => c.id === characterId)?.name ?? '旁白';
+}
+
+/** 本镜台词：默认只列出这个镜头说的话；"选择台词"展开整场台词，标出已经分给别的镜头的句子 */
+function ShotLines({ scene, shot, index, onChange }: { scene: Scene; shot: Shot; index: number; onChange: (ids: string[]) => void }) {
+  const { data } = useStory();
+  const [open, setOpen] = useState(false);
+  const linked = scene.dialogue.filter((line) => shot.dialogueIds.includes(line.id));
+  const usedBy = useMemo(() => {
+    const map = new Map<string, string[]>();
+    scene.shots.forEach((other, i) => {
+      if (other.id === shot.id) return;
+      for (const id of other.dialogueIds) map.set(id, [...(map.get(id) ?? []), shotLabel(other, i)]);
+    });
+    return map;
+  }, [scene.shots, shot.id]);
+  const toggleLine = (id: string) => onChange(inSceneOrder(scene, shot.dialogueIds.includes(id) ? shot.dialogueIds.filter((x) => x !== id) : [...shot.dialogueIds, id]));
+
+  return (
+    <div data-testid="shot-lines">
+      <div className="mb-1 flex items-center gap-2">
+        <p className="label !mb-0">本镜台词</p>
+        {linked.length > 0 && <span className="text-[11px] text-fg-3">{linked.length} 句</span>}
+        <button className="ml-auto flex items-center gap-1 text-[11px] text-accent hover:underline" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? '收起' : '选择台词'}
+          <ChevronDown className={cx('size-3 transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
+      {!open &&
+        (linked.length ? (
+          <ul className="space-y-1">
+            {linked.map((line) => (
+              <li key={line.id} className="group flex items-start gap-2 rounded-lg border-l-2 border-accent/70 bg-white/[0.03] py-1 pr-1 pl-2 text-xs leading-relaxed">
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium text-fg-2">{speakerName(data, line.characterId)}</span>
+                  {line.emotion && <span className="ml-1 text-[10px] text-fg-3">（{line.emotion}）</span>}
+                  <span className="text-fg-3">：</span>
+                  <span className="text-fg">{line.text || '（空）'}</span>
+                </span>
+                <button className="shrink-0 rounded p-0.5 text-fg-3 opacity-0 transition group-hover:opacity-100 hover:text-fg focus:opacity-100" onClick={() => toggleLine(line.id)} aria-label="从本镜移除这句台词">
+                  <X className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rounded-lg border border-dashed border-line px-2 py-1.5 text-[11px] text-fg-3">本镜没有台词（纯画面）</p>
+        ))}
+      {open && (
+        <ol className="max-h-56 space-y-0.5 overflow-auto rounded-lg border border-line p-1" aria-label={`为镜头 ${shotLabel(shot, index)} 选择台词`}>
+          {scene.dialogue.map((line, i) => {
+            const on = shot.dialogueIds.includes(line.id);
+            const others = usedBy.get(line.id);
+            return (
+              <li key={line.id}>
+                <button
+                  onClick={() => toggleLine(line.id)}
+                  aria-pressed={on}
+                  className={cx('flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-xs transition', on ? 'bg-accent/12 text-fg' : 'text-fg-3 hover:bg-white/[0.04] hover:text-fg-2')}
+                >
+                  <span className={cx('mt-px w-4 shrink-0 text-right font-mono text-[10px]', on ? 'text-accent' : 'text-fg-3')}>{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className={on ? 'text-fg-2' : ''}>{speakerName(data, line.characterId)}：</span>
+                    {line.text || '（空）'}
+                  </span>
+                  {others && <span className="shrink-0 rounded bg-white/[0.06] px-1 text-[10px] text-fg-3">已用于 {others.join('、')}</span>}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** 场次里还没分给任何镜头的台词：提示数量，展开后可以直接分给某个镜头 */
+function UnassignedLines({ scene }: { scene: Scene }) {
+  const { data, update } = useStory();
+  const [open, setOpen] = useState(false);
+  const unassigned = scene.dialogue.filter((line) => line.text.trim() && !scene.shots.some((shot) => shot.dialogueIds.includes(line.id)));
+  if (!unassigned.length || !scene.shots.length) return null;
+  const assign = (lineId: string, shotId: string) =>
+    update(updateScene(scene.id, (sc) => ({ ...sc, shots: sc.shots.map((shot) => (shot.id === shotId ? { ...shot, dialogueIds: inSceneOrder(sc, [...shot.dialogueIds, lineId]) } : shot)) })));
+  return (
+    <div className="w-full">
+      <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1.5 rounded-md bg-warn/10 px-2 py-1 text-xs text-warn hover:bg-warn/15" aria-expanded={open}>
+        <MessageSquareWarning className="size-3.5" />
+        还有 {unassigned.length} 句台词没分配到镜头
+        <ChevronDown className={cx('size-3 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <ul className="mt-2 space-y-1" aria-label="未分配的台词">
+          {unassigned.map((line) => (
+            <li key={line.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white/[0.03] px-2 py-1.5 text-xs">
+              <span className="min-w-0 flex-1">
+                <span className="text-fg-2">{speakerName(data, line.characterId)}：</span>
+                {line.text}
+              </span>
+              <select className="field !h-7 !w-auto !py-0 !text-xs" value="" onChange={(e) => e.target.value && assign(line.id, e.target.value)} aria-label="分配到镜头">
+                <option value="">分配到镜头…</option>
+                {scene.shots.map((shot, i) => (
+                  <option key={shot.id} value={shot.id}>
+                    {shotLabel(shot, i)} {shot.description.slice(0, 16)}
+                  </option>
+                ))}
+              </select>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly = false }: { scene: Scene; shot: Shot; index: number; onOpen: (asset: Asset) => void; imageOnly?: boolean }) {
   const { storyId, data, update, media } = useStory();
   const generator = useShotGenerator();
@@ -207,7 +331,7 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
   return (
     <div className={cx('panel cv-auto overflow-hidden', locked && 'ring-1 ring-ok/40')}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 sm:px-4">
-        <span className="font-mono text-sm font-semibold text-accent">#{shot.code || String(index + 1).padStart(2, '0')}</span>
+        <span className="font-mono text-sm font-semibold text-accent">{shotLabel(shot, index)}</span>
         <select className="field !w-auto !py-1 !text-xs" value={shot.shotSize} onChange={(e) => set({ shotSize: e.target.value })} aria-label="景别" disabled={locked}>
           {SHOT_SIZES.map((size) => (
             <option key={size}>{size}</option>
@@ -288,26 +412,7 @@ const ShotCard = memo(function ShotCard({ scene, shot, index, onOpen, imageOnly 
               </div>
             </div>
           )}
-          {scene.dialogue.length > 0 && (
-            <div>
-              <p className="label">对应台词</p>
-              <div className="flex max-h-28 flex-col gap-1 overflow-auto">
-                {scene.dialogue.map((line) => {
-                  const on = shot.dialogueIds.includes(line.id);
-                  return (
-                    <button
-                      key={line.id}
-                      onClick={() => set({ dialogueIds: toggle(shot.dialogueIds, line.id) })}
-                      className={cx('shrink-0 truncate rounded-lg border px-2 py-1 text-left text-xs transition', on ? 'border-violet/50 bg-violet/10 text-fg' : 'border-transparent text-fg-3 hover:bg-white/[0.04]')}
-                    >
-                      <span className="text-fg-2">{data.characters.find((c) => c.id === line.characterId)?.name ?? '旁白'}：</span>
-                      {line.text || '（空）'}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {scene.dialogue.length > 0 && <ShotLines scene={scene} shot={shot} index={index} onChange={(dialogueIds) => set({ dialogueIds })} />}
         </div>
 
         <div className="space-y-2">
@@ -610,6 +715,7 @@ function ShotsCards({ toggle, imageOnly }: { toggle: React.ReactNode; imageOnly:
                 批量生成…
               </Button>
             </div>
+            <UnassignedLines scene={found.scene} />
           </div>
 
           {found.scene.shots.map((shot, index) => (

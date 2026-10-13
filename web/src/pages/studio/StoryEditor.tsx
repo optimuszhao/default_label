@@ -16,6 +16,7 @@ import { PreviewTab } from './story/PreviewTab.tsx';
 import { ScriptTab } from './story/ScriptTab.tsx';
 import { SetupTab } from './story/SetupTab.tsx';
 import { ShotsTab } from './story/ShotsTab.tsx';
+import { StepRail } from './story/StepRail.tsx';
 import { stepDone, stepsFor, storyStats, type StepId } from './story/steps.ts';
 import { LayoutTab } from './story/LayoutTab.tsx';
 import { findTemplate, type StoryTemplate } from '../../../../shared/story-templates.ts';
@@ -229,47 +230,9 @@ export default function StoryEditor() {
         <BatchDialog />
         <CompareView />
 
-        {/* 步骤条 */}
+        {/* 步骤条：创作顺序一目了然，进度线连着已完成的步骤 */}
         <div className="sticky top-14 z-20 -mx-4 mt-3 border-b border-line bg-ink/90 px-4 backdrop-blur-xl sm:-mx-6 sm:px-6 md:top-0">
-          <nav className="no-scrollbar flex items-center gap-1 overflow-x-auto py-2" aria-label="创作步骤">
-            <button
-              onClick={() => go('overview')}
-              className={cx(
-                'flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[13px] transition-colors',
-                tab === 'overview' ? 'bg-white/[0.08] text-fg' : 'text-fg-3 hover:text-fg-2',
-              )}
-            >
-              <LayoutGrid className="size-3.5" /> 总览
-            </button>
-            <span className="mx-1 h-4 w-px shrink-0 bg-line" />
-            {steps.map((item, index) => {
-              const done = stepDone(item.id, data, stats);
-              const active = tab === item.id;
-              return (
-                <div key={item.id} className="flex shrink-0 items-center">
-                  {index > 0 && <span className={cx('mx-0.5 h-px w-3 sm:w-5', done ? 'bg-accent/60' : 'bg-line')} />}
-                  <button
-                    onClick={() => go(item.id)}
-                    aria-current={active ? 'step' : undefined}
-                    className={cx(
-                      'flex h-8 items-center gap-1.5 rounded-md px-2 text-[13px] transition-colors',
-                      active ? 'bg-white/[0.08] text-fg' : done ? 'text-fg-2 hover:text-fg' : 'text-fg-3 hover:text-fg-2',
-                    )}
-                  >
-                    <span
-                      className={cx(
-                        'flex size-[18px] items-center justify-center rounded font-mono text-[10px]',
-                        done ? 'bg-accent text-white' : active ? 'border border-accent text-accent' : 'border border-line-strong',
-                      )}
-                    >
-                      {done ? <Check className="size-3" /> : index + 1}
-                    </span>
-                    {item.label}
-                  </button>
-                </div>
-              );
-            })}
-          </nav>
+          <StepRail steps={steps} tab={tab} go={go} data={data} stats={stats} />
         </div>
 
         {/* 当前步骤说明 */}
